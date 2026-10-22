@@ -1,0 +1,26 @@
+{
+  "name": "resell-scriptengine",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Authentication panel for resell.scriptengine.gg",
+  "type": "module",
+  "scripts": {
+    "dev": "next dev --webpack -p 3010",
+    "build": "next build",
+    "start": "next start -p 3010",
+    "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
+    "deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@opennextjs/cloudflare": "^1.20.13",
+    "@supabase/supabase-js": "^2.110.0",
+    "lucide-react": "^1.23.0",
+    "next": "^16.2.10",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "wrangler": "^4.151.3"
+  }
+}
