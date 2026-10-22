@@ -10,6 +10,7 @@ const sans = Plus_Jakarta_Sans({
 export const metadata = {
   title: "Script Engine",
   description: "Authentication panel for Script Engine products.",
+  icons: { icon: "/images/scriptengine-logo.png" },
 };
 
 export const viewport = {

@@ -11,6 +11,9 @@ const nextConfig = {
     NEXT_PUBLIC_SUPABASE_ANON_KEY: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "",
   },
   poweredByHeader: false,
+  async redirects() {
+    return [{ source: "/favicon.ico", destination: "/images/scriptengine-logo.png", permanent: false }];
+  },
   async headers() {
     return [
       {

@@ -4735,27 +4735,25 @@ export default function AdminPanel({ mode = "admin" }) {
     }
     setLoaderBusy(true);
     try {
-      const token = await getAccessToken();
-      if (!token) {
-        const error = new Error("Sign in required.");
-        error.status = 401;
-        throw error;
-      }
-      const body = new FormData();
-      body.append("file", loaderFile);
-      body.append("version", loaderVersion.trim());
-      const response = await fetch("/api/admin/loader", {
+      const prepared = await api("/api/admin/loader", {
         method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
-        body,
+        body: JSON.stringify({ action: "prepare" }),
       });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(payload.error || "Upload failed.");
-      setLoaderInfo(payload.loader || null);
-      if (payload.loader?.version) setLoaderVersion(payload.loader.version);
+      const client = browserClient();
+      if (!client) throw new Error("Supabase public keys are missing.");
+      const sent = await client.storage.from("loader").uploadToSignedUrl(prepared.path, prepared.token, loaderFile, {
+        contentType: "application/octet-stream",
+      });
+      if (sent.error) throw new Error(sent.error.message || "Upload failed.");
+      const data = await api("/api/admin/loader", {
+        method: "POST",
+        body: JSON.stringify({ action: "commit", path: prepared.path, fileName: loaderFile.name }),
+      });
+      setLoaderInfo(data.loader || null);
+      if (data.loader?.version) setLoaderVersion(data.loader.version);
       setLoaderFile(null);
       if (loaderInputRef.current) loaderInputRef.current.value = "";
-      showToast(payload.warning || "Loader uploaded.", payload.warning ? "error" : "ok");
+      showToast("Loader uploaded.", "ok");
     } catch (err) {
       if (err.status === 401) {
         window.localStorage.removeItem(SESSION_KEY);

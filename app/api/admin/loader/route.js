@@ -2,13 +2,16 @@ import { createHash } from "crypto";
 import { NextResponse } from "next/server";
 import { findAuthStamps, findBrandStamps, findLogoStamps, normalizeLoaderVersion, readEmbeddedVersion, readPeFileVersion, readPeInfo } from "../../../../lib/loader-brand";
 import {
+  createLoaderUpload,
   listBlacklist,
   loaderSetupError,
   normalizeLoaderStatus,
+  readIncomingLoader,
   readLoaderBinary,
   logLoaderStatus,
   readLoaderMeta,
   readStatusHistory,
+  removeIncomingLoader,
   resumeFrozenLicenses,
   saveLoaderBinary,
   saveLoaderStatus,
@@ -61,9 +64,54 @@ export async function GET(request) {
   return NextResponse.json({ loader: await withDetails(auth.supabase, loader, bytes), blacklist: blacklist.blacklist });
 }
 
+function rejectLoader(bytes) {
+  if (!bytes || bytes.length < 1024 || bytes.length > MAX_BYTES) {
+    return "Loader file must be between 1 KB and 80 MB.";
+  }
+  if (bytes[0] !== 0x4d || bytes[1] !== 0x5a) return "This file is not a Windows executable.";
+  if (!findBrandStamps(bytes).length) return "This loader has no brand stamp. Upload the Loader.exe built from UNI - Loader.";
+  if (!findAuthStamps(bytes).length) return "This loader has no update stamp. Upload the latest Loader.exe built from UNI - Loader.";
+  if (!findLogoStamps(bytes).length) return "This loader has no logo slot. Upload the latest Loader.exe built from UNI - Loader.";
+  if (!readEmbeddedVersion(bytes)) return "This loader has no LOADER_VERSION. Upload the latest Loader.exe built from UNI - Loader.";
+  return "";
+}
+
+async function finishLoaderUpload(supabase, bytes, fileName) {
+  const problem = rejectLoader(bytes);
+  if (problem) return NextResponse.json({ error: problem }, { status: 400 });
+  const saved = await saveLoaderBinary(supabase, bytes, fileName.slice(0, 180));
+  if (saved.error) return setupResponse(saved.error);
+  const meta = await readLoaderMeta(supabase);
+  if (meta.error) return setupResponse(meta.error);
+  return NextResponse.json({ loader: await withDetails(supabase, meta.loader, bytes) });
+}
+
 export async function POST(request) {
   const auth = await requireAdmin(request);
   if (auth.error) return auth.error;
+
+  const contentType = request.headers.get("content-type") || "";
+  if (contentType.includes("application/json")) {
+    const body = await request.json().catch(() => ({}));
+    if (body.action === "prepare") {
+      const upload = await createLoaderUpload(auth.supabase);
+      if (upload.error) return setupResponse(upload.error);
+      return NextResponse.json({ path: upload.path, token: upload.token });
+    }
+    if (body.action === "commit") {
+      const incoming = await readIncomingLoader(auth.supabase, body.path);
+      if (incoming.error) return setupResponse(incoming.error);
+      const fileName = String(body.fileName || "Loader.exe");
+      if (!fileName.toLowerCase().endsWith(".exe")) {
+        await removeIncomingLoader(auth.supabase, body.path);
+        return NextResponse.json({ error: "Only .exe files can be uploaded." }, { status: 400 });
+      }
+      const response = await finishLoaderUpload(auth.supabase, incoming.bytes, fileName);
+      await removeIncomingLoader(auth.supabase, body.path);
+      return response;
+    }
+    return NextResponse.json({ error: "Choose a .exe file." }, { status: 400 });
+  }
 
   const form = await request.formData().catch(() => null);
   const file = form?.get("file");
@@ -77,51 +125,7 @@ export async function POST(request) {
   }
 
   const bytes = Buffer.from(await file.arrayBuffer());
-  if (bytes.length < 1024 || bytes.length > MAX_BYTES) {
-    return NextResponse.json({ error: "Loader file must be between 1 KB and 80 MB." }, { status: 400 });
-  }
-  if (bytes[0] !== 0x4d || bytes[1] !== 0x5a) {
-    return NextResponse.json({ error: "This file is not a Windows executable." }, { status: 400 });
-  }
-  if (!findBrandStamps(bytes).length) {
-    return NextResponse.json(
-      { error: "This loader has no brand stamp. Upload the Loader.exe built from UNI - Loader." },
-      { status: 400 }
-    );
-  }
-  if (!findAuthStamps(bytes).length) {
-    return NextResponse.json(
-      { error: "This loader has no update stamp. Upload the latest Loader.exe built from UNI - Loader." },
-      { status: 400 }
-    );
-  }
-  if (!findLogoStamps(bytes).length) {
-    return NextResponse.json(
-      { error: "This loader has no logo slot. Upload the latest Loader.exe built from UNI - Loader." },
-      { status: 400 }
-    );
-  }
-
-  const version = readEmbeddedVersion(bytes);
-  if (!version) {
-    return NextResponse.json(
-      { error: "This loader has no LOADER_VERSION. Upload the latest Loader.exe built from UNI - Loader." },
-      { status: 400 }
-    );
-  }
-
-  const saved = await saveLoaderBinary(auth.supabase, bytes, fileName.slice(0, 180));
-  if (saved.error) return setupResponse(saved.error);
-
-  const meta = await readLoaderMeta(auth.supabase);
-  if (meta.error) return setupResponse(meta.error);
-  const loader = meta.loader;
-  return NextResponse.json({
-    loader: await withDetails(auth.supabase, loader, bytes),
-    warning: saved.storageError
-      ? `Loader is saved on this server, but cloud storage failed: ${saved.storageError.message}`
-      : "",
-  });
+  return finishLoaderUpload(auth.supabase, bytes, fileName);
 }
 
 export async function PATCH(request) {
