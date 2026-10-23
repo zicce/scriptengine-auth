@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { isMissingTableError } from "../../../../lib/constants";
 import { readLicenseFreeze } from "../../../../lib/loader-store";
 import { readKeyFormat } from "../../../../lib/panel-settings";
+import { normalizeDiscount } from "../../../../lib/pricing";
 import { requireAdmin } from "../../../../lib/require-admin";
 import { listUpdates } from "../../../../lib/updates";
 
@@ -48,8 +49,14 @@ export async function GET(request) {
   let resellers = [];
   let resellerQuery = await auth.supabase
     .from("resellers")
-    .select("id, discord_id, username, avatar_url, service_name, balance, created_at, team_management, reseller_applications (application_id)")
+    .select("id, discord_id, username, avatar_url, service_name, balance, created_at, team_management, discount_percent, reseller_applications (application_id)")
     .order("created_at", { ascending: false });
+  if (resellerQuery.error && /discount_percent/i.test(resellerQuery.error.message || "")) {
+    resellerQuery = await auth.supabase
+      .from("resellers")
+      .select("id, discord_id, username, avatar_url, service_name, balance, created_at, team_management, reseller_applications (application_id)")
+      .order("created_at", { ascending: false });
+  }
   if (resellerQuery.error && /team_management|avatar_url|service_name/i.test(resellerQuery.error.message || "")) {
     resellerQuery = await auth.supabase
       .from("resellers")
@@ -68,6 +75,7 @@ export async function GET(request) {
       createdAt: row.created_at,
       applicationIds: (row.reseller_applications || []).map((entry) => entry.application_id),
       teamManagement: row.team_management !== false,
+      discountPercent: normalizeDiscount(row.discount_percent),
     }));
   }
 

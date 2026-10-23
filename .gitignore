@@ -7,3 +7,4 @@ node_modules
 *.log
 data/loader
 cloudflare-env.d.ts
+.wrangler

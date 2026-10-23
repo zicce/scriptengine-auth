@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { isMissingTableError } from "../../../../lib/constants";
 import { readLicenseFreeze } from "../../../../lib/loader-store";
+import { discountedPrice, normalizeDiscount } from "../../../../lib/pricing";
 import { requireReseller } from "../../../../lib/require-reseller";
 import { listResellerTransactions, withUnloggedLicenses } from "../../../../lib/transactions";
 import { listUpdates } from "../../../../lib/updates";
@@ -26,6 +27,7 @@ export async function GET() {
   const ownerIds = (access || []).map((row) => row.application_id);
   const applicationIds =
     auth.actor.role === "helper" ? ownerIds.filter((id) => auth.actor.applicationIds.includes(id)) : ownerIds;
+  const discountPercent = normalizeDiscount(auth.reseller.discount_percent);
   const applicationNames = new Map();
   const variantPrices = new Map();
   let applications = [];
@@ -46,6 +48,7 @@ export async function GET() {
         ...app,
         variants: (app.application_variants || [])
           .filter((variant) => variant.active !== false)
+          .map((variant) => ({ ...variant, price: discountedPrice(variant.price, discountPercent) }))
           .sort((a, b) => Number(a.sort_order || 0) - Number(b.sort_order || 0)),
       };
     });
@@ -123,6 +126,7 @@ export async function GET() {
       email: (helper ? auth.actor.username : auth.reseller.username) || (helper ? auth.actor.discordId : auth.reseller.discord_id),
       role: helper ? "Helper" : "Reseller",
       balance: Number(auth.reseller.balance || 0),
+      discountPercent,
       createdAt: helper ? auth.actor.createdAt : auth.reseller.created_at,
       teamManagement: !helper && auth.reseller.team_management === true,
       permissions: {

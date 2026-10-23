@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { isMissingTableError } from "../../../../lib/constants";
 import { isDiscordId } from "../../../../lib/discord";
+import { normalizeDiscount } from "../../../../lib/pricing";
 import { requireAdmin } from "../../../../lib/require-admin";
 import { recordTopup } from "../../../../lib/transactions";
 
@@ -20,6 +21,11 @@ function parseBody(body) {
   const balance = Number(body.balance);
   const applicationIds = [...new Set((Array.isArray(body.applicationIds) ? body.applicationIds : []).map((id) => String(id || "").trim()).filter(Boolean))];
   const teamManagement = body.teamManagement !== false;
+  const discountInput = body.discountPercent === undefined || body.discountPercent === "" ? 0 : Number(body.discountPercent);
+  if (!Number.isFinite(discountInput) || discountInput < 0 || discountInput > 100) {
+    return { error: "Discount must be a number from 0 to 100." };
+  }
+  const discountPercent = normalizeDiscount(discountInput);
   if (!isDiscordId(discordId)) {
     return { error: "Enter a valid Discord user ID." };
   }
@@ -32,7 +38,20 @@ function parseBody(body) {
   if (!applicationIds.length) {
     return { error: "Select at least one application." };
   }
-  return { discordId, serviceName, balance: Math.round(balance * 100) / 100, applicationIds, teamManagement };
+  return { discordId, serviceName, balance: Math.round(balance * 100) / 100, applicationIds, teamManagement, discountPercent };
+}
+
+const DISCOUNT_MISSING = "Discounts are missing. Run supabase/migrate-discount.sql in the Supabase SQL Editor.";
+
+// A zero discount is the column default, so it can still be saved before the migration is run.
+async function writeReseller(parsed, run) {
+  const base = { discord_id: parsed.discordId, service_name: parsed.serviceName, balance: parsed.balance, team_management: parsed.teamManagement };
+  const result = await run({ ...base, discount_percent: parsed.discountPercent });
+  if (result.error && /discount_percent/i.test(result.error.message || "")) {
+    if (parsed.discountPercent === 0) return run(base);
+    return { error: { message: DISCOUNT_MISSING }, discountMissing: true };
+  }
+  return result;
 }
 
 async function replaceAccess(supabase, resellerId, applicationIds) {
@@ -58,9 +77,12 @@ export async function GET(request) {
 
   const { data: reseller, error } = await auth.supabase
     .from("resellers")
-    .select("id, discord_id, username, balance, reseller_applications (application_id)")
+    .select("id, discord_id, username, balance, discount_percent, reseller_applications (application_id)")
     .eq("id", id)
     .maybeSingle();
+  if (error && /discount_percent/i.test(error.message || "")) {
+    return NextResponse.json({ error: DISCOUNT_MISSING }, { status: 503 });
+  }
   if (error) {
     const missing = missingResponse(error);
     if (missing) return missing;
@@ -82,6 +104,7 @@ export async function GET(request) {
       discordId: reseller.discord_id,
       username: reseller.username || "",
       balance: Number(reseller.balance || 0),
+      discountPercent: normalizeDiscount(reseller.discount_percent),
       applicationIds: (reseller.reseller_applications || []).map((entry) => entry.application_id),
     },
     licenses: licenses || [],
@@ -94,11 +117,10 @@ export async function POST(request) {
   const parsed = parseBody(await request.json().catch(() => ({})));
   if (parsed.error) return NextResponse.json({ error: parsed.error }, { status: 400 });
 
-  const { data: created, error } = await auth.supabase
-    .from("resellers")
-    .insert({ discord_id: parsed.discordId, service_name: parsed.serviceName, balance: parsed.balance, team_management: parsed.teamManagement })
-    .select("id")
-    .single();
+  const { data: created, error, discountMissing } = await writeReseller(parsed, (row) =>
+    auth.supabase.from("resellers").insert(row).select("id").single()
+  );
+  if (discountMissing) return NextResponse.json({ error: error.message }, { status: 503 });
   if (error) {
     const missing = missingResponse(error);
     if (missing) return missing;
@@ -179,10 +201,10 @@ export async function PATCH(request) {
   }
   if (!existing) return NextResponse.json({ error: "Reseller not found." }, { status: 404 });
 
-  const { error } = await auth.supabase
-    .from("resellers")
-    .update({ discord_id: parsed.discordId, service_name: parsed.serviceName, balance: parsed.balance, team_management: parsed.teamManagement })
-    .eq("id", id);
+  const { error, discountMissing } = await writeReseller(parsed, (row) =>
+    auth.supabase.from("resellers").update(row).eq("id", id)
+  );
+  if (discountMissing) return NextResponse.json({ error: error.message }, { status: 503 });
   if (error) {
     const missing = missingResponse(error);
     if (missing) return missing;

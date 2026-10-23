@@ -3480,7 +3480,7 @@ export default function AdminPanel({ mode = "admin" }) {
   const [tagOpen, setTagOpen] = useState(false);
   const [customAffect, setCustomAffect] = useState({ name: "", icon: UPDATE_TAG_ICONS[0] });
   const [updateBusy, setUpdateBusy] = useState(false);
-  const [resellerForm, setResellerForm] = useState({ discordId: "", serviceName: "", balance: "0", applicationIds: [], teamManagement: true });
+  const [resellerForm, setResellerForm] = useState({ discordId: "", serviceName: "", balance: "0", discountPercent: "0", applicationIds: [], teamManagement: true });
   const [balanceAmount, setBalanceAmount] = useState("");
   const [helpers, setHelpers] = useState([]);
   const [helperForm, setHelperForm] = useState({ discordId: "", applicationIds: [], canGenerate: false, canResetHwid: false, canBan: false });
@@ -4209,10 +4209,11 @@ export default function AdminPanel({ mode = "admin" }) {
             discordId: entry.discordId,
             serviceName: entry.serviceName || "",
             balance: Number(entry.balance || 0).toFixed(2),
+            discountPercent: String(Number(entry.discountPercent || 0)),
             applicationIds: entry.applicationIds || [],
             teamManagement: entry.teamManagement !== false,
           }
-        : { discordId: "", serviceName: "", balance: "0", applicationIds: [], teamManagement: true }
+        : { discordId: "", serviceName: "", balance: "0", discountPercent: "0", applicationIds: [], teamManagement: true }
     );
     setFormMessage("");
     setFormTone("");
@@ -4240,6 +4241,7 @@ export default function AdminPanel({ mode = "admin" }) {
           discordId: resellerForm.discordId,
           serviceName: resellerForm.serviceName,
           balance: resellerForm.balance,
+          discountPercent: resellerForm.discountPercent,
           applicationIds: resellerForm.applicationIds,
           teamManagement: resellerForm.teamManagement,
         }),
@@ -6536,6 +6538,20 @@ export default function AdminPanel({ mode = "admin" }) {
               />
             </div>
             <div className={styles.group}>
+              <label htmlFor="reseller-discount">Discount (%)</label>
+              <input
+                id="reseller-discount"
+                type="number"
+                min="0"
+                max="100"
+                step="0.01"
+                value={resellerForm.discountPercent}
+                onChange={(event) => setResellerForm((current) => ({ ...current, discountPercent: event.target.value }))}
+                required
+              />
+              <span className={styles.muted}>Taken off every variant price this reseller sees and pays. 0 means list price.</span>
+            </div>
+            <div className={styles.group}>
               <span className={styles.sectionLabel}>Applications</span>
               <div className={styles.appChecks}>
                 {applications.length ? (
@@ -6759,6 +6775,7 @@ export default function AdminPanel({ mode = "admin" }) {
             {reseller ? (
               <p className={styles.muted}>
                 Total {formatPrice(orderCost)} · Balance {formatPrice(account?.balance)}
+                {Number(account?.discountPercent) > 0 ? ` · ${Number(account.discountPercent)}% discount applied` : ""}
               </p>
             ) : null}
             <div className={`${styles.message} ${formTone === "error" ? styles.messageError : styles.messageOk}`}>{formMessage}</div>

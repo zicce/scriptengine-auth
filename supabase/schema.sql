@@ -116,6 +116,7 @@ create table if not exists public.resellers (
   avatar_url text,
   service_name text,
   balance numeric(10, 2) not null default 0 check (balance >= 0),
+  discount_percent numeric(5, 2) not null default 0 check (discount_percent >= 0 and discount_percent <= 100),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { MAX_LICENSE_QUANTITY } from "../../../../lib/constants";
 import { generateLicenseKey } from "../../../../lib/license-key";
+import { discountedPrice } from "../../../../lib/pricing";
 import { readKeyFormat } from "../../../../lib/panel-settings";
 import { requireReseller } from "../../../../lib/require-reseller";
 import { recordLicensePurchases } from "../../../../lib/transactions";
@@ -65,7 +66,7 @@ export async function POST(request) {
     return NextResponse.json({ error: "Key generation is locked for this application." }, { status: 400 });
   }
 
-  const unitPrice = Number(variant.price || 0);
+  const unitPrice = discountedPrice(Number(variant.price || 0), auth.reseller.discount_percent);
   const cost = Math.round(unitPrice * quantity * 100) / 100;
   const balance = Number(auth.reseller.balance || 0);
   if (cost > balance) {
