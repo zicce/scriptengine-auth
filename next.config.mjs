@@ -12,7 +12,7 @@ const nextConfig = {
   },
   poweredByHeader: false,
   async redirects() {
-    return [{ source: "/favicon.ico", destination: "/images/scriptengine-logo.png", permanent: false }];
+    return [{ source: "/favicon.ico", destination: "/images/logo-icon.png", permanent: false }];
   },
   async headers() {
     return [
