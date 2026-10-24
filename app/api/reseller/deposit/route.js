@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
-import { ensureServerEnv, serverEnv } from "../../../../lib/server-env";
 import { requireReseller } from "../../../../lib/require-reseller";
-import { chargeGooglePayToken, createDepositSession, creditPaidIntent, creditPaidSession, retrieveIntent, retrieveSession } from "../../../../lib/stripe";
+import { createDepositSession, creditPaidSession, retrieveSession } from "../../../../lib/stripe";
 
 export const dynamic = "force-dynamic";
 
@@ -26,7 +25,7 @@ export async function POST(request) {
   if (denied) return denied;
 
   const body = await request.json().catch(() => ({}));
-  if (body.method !== "card" && body.method !== "gpay") {
+  if (body.method !== "card") {
     return NextResponse.json({ error: "That payment method is not available yet." }, { status: 400 });
   }
   const amount = Math.round(Number(body.amount) * 100) / 100;
@@ -35,18 +34,6 @@ export async function POST(request) {
   }
 
   try {
-    if (body.method === "gpay") {
-      const token = String(body.token || "");
-      if (!/^tok_[A-Za-z0-9_]+$/.test(token)) {
-        return NextResponse.json({ error: "Google Pay did not return a payment token." }, { status: 400 });
-      }
-      const intent = await chargeGooglePayToken({ resellerId: auth.reseller.id, amount, token });
-      if (intent.status !== "succeeded") {
-        return NextResponse.json({ error: "This card needs extra verification. Pay by card instead." }, { status: 402 });
-      }
-      const result = await creditPaidIntent(auth.supabase, intent);
-      return NextResponse.json({ paid: true, credited: result.credited === true });
-    }
     const session = await createDepositSession({
       resellerId: auth.reseller.id,
       amount,
@@ -66,25 +53,6 @@ export async function GET(request) {
   if (denied) return denied;
 
   const params = new URL(request.url).searchParams;
-  if (params.has("config")) {
-    // The publishable key is read at request time, so it needs no rebuild when it changes.
-    await ensureServerEnv();
-    return NextResponse.json({ publishableKey: serverEnv("STRIPE_PUBLISHABLE_KEY") || serverEnv("NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY") });
-  }
-  const intentId = params.get("payment_intent") || "";
-  if (/^pi_[A-Za-z0-9_]+$/.test(intentId)) {
-    try {
-      const intent = await retrieveIntent(intentId);
-      if (intent.metadata?.reseller_id !== auth.reseller.id) {
-        return NextResponse.json({ error: "That payment belongs to another account." }, { status: 403 });
-      }
-      const result = await creditPaidIntent(auth.supabase, intent);
-      return NextResponse.json({ paid: intent.status === "succeeded", credited: result.credited === true });
-    } catch (error) {
-      return fail(error);
-    }
-  }
-
   const sessionId = params.get("session_id") || "";
   if (!/^cs_[A-Za-z0-9_]+$/.test(sessionId)) {
     return NextResponse.json({ error: "Missing payment session." }, { status: 400 });

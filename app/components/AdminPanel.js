@@ -825,13 +825,6 @@ const DEPOSIT_METHODS = [
     ],
   },
   {
-    id: "gpay",
-    name: "Google Pay",
-    detail: "Pay with your saved Google cards",
-    processor: "Stripe",
-    marks: [{ src: "/images/payment-methods/googlepay.svg", card: true }],
-  },
-  {
     id: "crypto",
     name: "Cryptocurrencies",
     detail: "BTC, ETH, LTC, USDT, and much more...",
@@ -845,133 +838,6 @@ const DEPOSIT_STEPS = [
   { icon: ShieldCheck, title: "Pay securely", text: "Card through Stripe or crypto through NOWPayments." },
   { icon: Check, title: "Balance credited", text: "Added automatically once the payment is confirmed." },
 ];
-
-function loadGooglePayJs() {
-  if (typeof window === "undefined") return Promise.reject(new Error("No window."));
-  if (window.google?.payments?.api) return Promise.resolve(window.google.payments.api);
-  return new Promise((resolve, reject) => {
-    let script = document.querySelector("script[data-google-pay-js]");
-    if (!script) {
-      script = document.createElement("script");
-      script.src = "https://pay.google.com/gp/p/js/pay.js";
-      script.async = true;
-      script.dataset.googlePayJs = "1";
-      document.head.appendChild(script);
-    }
-    script.addEventListener("load", () => resolve(window.google.payments.api));
-    script.addEventListener("error", () => reject(new Error("Could not load Google Pay.")));
-  });
-}
-
-const GOOGLE_PAY_CARD = {
-  type: "CARD",
-  parameters: {
-    allowedAuthMethods: ["PAN_ONLY", "CRYPTOGRAM_3DS"],
-    allowedCardNetworks: ["MASTERCARD", "VISA"],
-  },
-};
-
-// Google Pay button. Clicking it opens Google's own payment sheet; Google hands back a Stripe
-// card token, and the server charges it and credits the balance.
-function GooglePayButton({ amount, disabled, onPaid, onError }) {
-  const host = useRef(null);
-  const clientRef = useRef(null);
-  const keyRef = useRef("");
-  const latest = useRef({ amount, onPaid, onError });
-  const [state, setState] = useState("loading");
-  const [reason, setReason] = useState("");
-  latest.current = { amount, onPaid, onError };
-
-  useEffect(() => {
-    let cancelled = false;
-    const fail = (why) => {
-      if (cancelled) return;
-      setReason(why);
-      setState("unavailable");
-    };
-    Promise.all([resellerApi("/api/reseller/deposit?config=1"), loadGooglePayJs()])
-      .then(([config, api]) => {
-        if (cancelled || !host.current) return null;
-        keyRef.current = config.publishableKey || "";
-        if (!keyRef.current) {
-          fail("Stripe publishable key is missing on the server.");
-          return null;
-        }
-        const client = new api.PaymentsClient({
-          environment: keyRef.current.startsWith("pk_live") ? "PRODUCTION" : "TEST",
-        });
-        clientRef.current = client;
-        return client.isReadyToPay({ apiVersion: 2, apiVersionMinor: 0, allowedPaymentMethods: [GOOGLE_PAY_CARD] }).then((ready) => {
-          if (cancelled || !host.current) return;
-          if (!ready.result) {
-            fail("Google Pay reported this browser cannot use it.");
-            return;
-          }
-          host.current.replaceChildren(
-            client.createButton({
-              buttonColor: "white",
-              buttonType: "pay",
-              buttonSizeMode: "fill",
-              onClick: pay,
-            })
-          );
-          setState("ready");
-        });
-      })
-      .catch((err) => fail(err?.message || "Google Pay could not load."));
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  async function pay() {
-    const { amount: value, onPaid: done, onError: fail } = latest.current;
-    try {
-      const data = await clientRef.current.loadPaymentData({
-        apiVersion: 2,
-        apiVersionMinor: 0,
-        allowedPaymentMethods: [
-          {
-            ...GOOGLE_PAY_CARD,
-            tokenizationSpecification: {
-              type: "PAYMENT_GATEWAY",
-              parameters: {
-                gateway: "stripe",
-                "stripe:version": "2018-10-31",
-                "stripe:publishableKey": keyRef.current,
-              },
-            },
-          },
-        ],
-        merchantInfo: { merchantName: "Script Engine" },
-        transactionInfo: {
-          totalPriceStatus: "FINAL",
-          totalPrice: Number(value).toFixed(2),
-          currencyCode: "EUR",
-        },
-      });
-      const token = JSON.parse(data.paymentMethodData.tokenizationData.token);
-      await resellerApi("/api/reseller/deposit", {
-        method: "POST",
-        body: JSON.stringify({ amount: value, method: "gpay", token: token.id }),
-      });
-      done();
-    } catch (err) {
-      if (err?.statusCode === "CANCELED") return;
-      fail(err.message || "Google Pay failed.");
-    }
-  }
-
-  return (
-    <div className={styles.dpGpay} style={disabled ? { opacity: 0.45, pointerEvents: "none" } : undefined}>
-      <div ref={host} style={{ minHeight: 46 }} />
-      {state === "loading" ? <p className={styles.dpPick}>Loading Google Pay…</p> : null}
-      {state === "unavailable" ? (
-        <p className={styles.dpPick}>{reason || "Google Pay is not available."} Pay by card instead.</p>
-      ) : null}
-    </div>
-  );
-}
 
 function DepositScreen({
   balance,
@@ -989,8 +855,6 @@ function DepositScreen({
   onPreview,
   onClearPreview,
   busy = false,
-  onPaid,
-  onError,
 }) {
   const fill = ((clampDeposit(amount) - DEPOSIT_MIN) / (DEPOSIT_MAX - DEPOSIT_MIN)) * 100;
   const after = Math.round((Number(balance || 0) + Number(amount || 0)) * 100) / 100;
@@ -1181,14 +1045,10 @@ function DepositScreen({
                     </button>
                   </div>
                 ) : (
-                  selected?.id === "gpay" && !demoPanelBase ? (
-                    <GooglePayButton amount={amount} disabled={!draftOk} onPaid={onPaid} onError={onError} />
-                  ) : (
                   <button className={`${styles.primary} ${styles.dpPay}`} type="button" disabled={!draftOk || !selected || busy} onClick={onPreview}>
                     {busy ? "Opening checkout…" : `Pay ${formatPrice(amount)}`}
                     {busy ? <Loader2 size={15} /> : <ArrowRight size={15} />}
                   </button>
-                  )
                 )}
               </div>
             </div>
@@ -4736,7 +4596,7 @@ export default function AdminPanel({ mode = "admin", demo = false }) {
 
   async function startDeposit() {
     // Crypto and the public demo have no checkout yet, so they only show the preview receipt.
-    if (demoPanelBase || (depositMethod !== "card" && depositMethod !== "gpay")) {
+    if (demoPanelBase || depositMethod !== "card") {
       setDepositPreview(true);
       return;
     }
@@ -4745,7 +4605,7 @@ export default function AdminPanel({ mode = "admin", demo = false }) {
     try {
       const result = await resellerApi("/api/reseller/deposit", {
         method: "POST",
-        body: JSON.stringify({ amount: depositAmount, method: depositMethod }),
+        body: JSON.stringify({ amount: depositAmount, method: "card" }),
       });
       if (!result.url) throw new Error("Could not open checkout.");
       window.location.href = result.url;
@@ -6036,11 +5896,6 @@ export default function AdminPanel({ mode = "admin", demo = false }) {
               }}
               onPreview={startDeposit}
               busy={depositBusy}
-              onPaid={() => {
-                showToast("Payment received. Your balance was updated.", "success");
-                load();
-              }}
-              onError={(message) => showToast(message, "error")}
               onClearPreview={() => setDepositPreview(false)}
             />
           ) : view === "transactions" && reseller ? (

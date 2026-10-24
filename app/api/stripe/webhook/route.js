@@ -1,12 +1,11 @@
 import { NextResponse } from "next/server";
-import { creditPaidIntent, creditPaidSession, verifyWebhook } from "../../../../lib/stripe";
+import { creditPaidSession, verifyWebhook } from "../../../../lib/stripe";
 import { ensureServerEnv, serverEnv } from "../../../../lib/server-env";
 import { getSupabaseAdmin } from "../../../../lib/supabase-admin";
 
 export const dynamic = "force-dynamic";
 
 const PAID_EVENTS = new Set(["checkout.session.completed", "checkout.session.async_payment_succeeded"]);
-const INTENT_EVENT = "payment_intent.succeeded";
 
 export async function POST(request) {
   await ensureServerEnv();
@@ -24,11 +23,10 @@ export async function POST(request) {
     return NextResponse.json({ error: "Invalid payload." }, { status: 400 });
   }
 
-  if (PAID_EVENTS.has(event.type) || event.type === INTENT_EVENT) {
+  if (PAID_EVENTS.has(event.type)) {
     try {
       const supabase = await getSupabaseAdmin();
-      if (event.type === INTENT_EVENT) await creditPaidIntent(supabase, event.data?.object);
-      else await creditPaidSession(supabase, event.data?.object);
+      await creditPaidSession(supabase, event.data?.object);
     } catch (error) {
       // A non-2xx answer makes Stripe retry the event.
       return NextResponse.json({ error: error.message }, { status: 500 });
