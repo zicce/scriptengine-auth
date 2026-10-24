@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireReseller } from "../../../../lib/require-reseller";
-import { createDepositSession, creditPaidSession, retrieveSession } from "../../../../lib/stripe";
+import { createDepositIntent, createDepositSession, creditPaidIntent, creditPaidSession, retrieveIntent, retrieveSession } from "../../../../lib/stripe";
 
 export const dynamic = "force-dynamic";
 
@@ -34,6 +34,10 @@ export async function POST(request) {
   }
 
   try {
+    if (body.method === "gpay") {
+      const intent = await createDepositIntent({ resellerId: auth.reseller.id, amount });
+      return NextResponse.json({ clientSecret: intent.client_secret });
+    }
     const session = await createDepositSession({
       resellerId: auth.reseller.id,
       amount,
@@ -52,7 +56,22 @@ export async function GET(request) {
   const denied = owner(auth);
   if (denied) return denied;
 
-  const sessionId = new URL(request.url).searchParams.get("session_id") || "";
+  const params = new URL(request.url).searchParams;
+  const intentId = params.get("payment_intent") || "";
+  if (/^pi_[A-Za-z0-9_]+$/.test(intentId)) {
+    try {
+      const intent = await retrieveIntent(intentId);
+      if (intent.metadata?.reseller_id !== auth.reseller.id) {
+        return NextResponse.json({ error: "That payment belongs to another account." }, { status: 403 });
+      }
+      const result = await creditPaidIntent(auth.supabase, intent);
+      return NextResponse.json({ paid: intent.status === "succeeded", credited: result.credited === true });
+    } catch (error) {
+      return fail(error);
+    }
+  }
+
+  const sessionId = params.get("session_id") || "";
   if (!/^cs_[A-Za-z0-9_]+$/.test(sessionId)) {
     return NextResponse.json({ error: "Missing payment session." }, { status: 400 });
   }

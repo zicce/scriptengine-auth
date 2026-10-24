@@ -846,6 +846,114 @@ const DEPOSIT_STEPS = [
   { icon: Check, title: "Balance credited", text: "Added automatically once the payment is confirmed." },
 ];
 
+const STRIPE_PUBLISHABLE_KEY = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY || "";
+
+function loadStripeJs() {
+  if (typeof window === "undefined") return Promise.reject(new Error("No window."));
+  if (window.Stripe) return Promise.resolve(window.Stripe);
+  return new Promise((resolve, reject) => {
+    let script = document.querySelector("script[data-stripe-js]");
+    if (!script) {
+      script = document.createElement("script");
+      script.src = "https://js.stripe.com/v3/";
+      script.async = true;
+      script.dataset.stripeJs = "1";
+      document.head.appendChild(script);
+    }
+    script.addEventListener("load", () => resolve(window.Stripe));
+    script.addEventListener("error", () => reject(new Error("Could not load Stripe.")));
+  });
+}
+
+// Google Pay button from Stripe's Express Checkout Element. The payment is confirmed in the
+// browser, then the server checks it with Stripe before crediting the balance.
+function GooglePayButton({ amount, disabled, onPaid, onError }) {
+  const host = useRef(null);
+  const elementsRef = useRef(null);
+  const amountRef = useRef(amount);
+  const handlers = useRef({ onPaid, onError });
+  const [state, setState] = useState("loading");
+  amountRef.current = amount;
+  handlers.current = { onPaid, onError };
+
+  useEffect(() => {
+    if (!STRIPE_PUBLISHABLE_KEY) {
+      setState("unavailable");
+      return undefined;
+    }
+    let cancelled = false;
+    let express = null;
+    loadStripeJs()
+      .then((Stripe) => {
+        if (cancelled || !host.current) return;
+        const stripe = Stripe(STRIPE_PUBLISHABLE_KEY);
+        const elements = stripe.elements({
+          mode: "payment",
+          amount: Math.round(amountRef.current * 100),
+          currency: "eur",
+          paymentMethodTypes: ["card"],
+          appearance: { theme: "night" },
+        });
+        elementsRef.current = elements;
+        express = elements.create("expressCheckout", {
+          paymentMethods: { googlePay: "auto", applePay: "never", link: "never", amazonPay: "never", paypal: "never", klarna: "never" },
+          buttonType: { googlePay: "pay" },
+          buttonTheme: { googlePay: "white" },
+          buttonHeight: 46,
+        });
+        express.on("ready", (event) => {
+          if (!cancelled) setState(event.availablePaymentMethods?.googlePay ? "ready" : "unavailable");
+        });
+        express.on("confirm", async () => {
+          try {
+            const submitted = await elements.submit();
+            if (submitted.error) throw new Error(submitted.error.message);
+            const created = await resellerApi("/api/reseller/deposit", {
+              method: "POST",
+              body: JSON.stringify({ amount: amountRef.current, method: "gpay" }),
+            });
+            const result = await stripe.confirmPayment({
+              elements,
+              clientSecret: created.clientSecret,
+              confirmParams: { return_url: `${window.location.origin}/panel/deposit` },
+              redirect: "if_required",
+            });
+            if (result.error) throw new Error(result.error.message);
+            const intentId = result.paymentIntent?.id;
+            if (!intentId) throw new Error("Payment could not be confirmed.");
+            await resellerApi(`/api/reseller/deposit?payment_intent=${encodeURIComponent(intentId)}`);
+            handlers.current.onPaid();
+          } catch (err) {
+            handlers.current.onError(err.message || "Google Pay failed.");
+          }
+        });
+        express.mount(host.current);
+      })
+      .catch(() => {
+        if (!cancelled) setState("unavailable");
+      });
+    return () => {
+      cancelled = true;
+      if (express) express.destroy();
+      elementsRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (elementsRef.current) elementsRef.current.update({ amount: Math.round(amount * 100) });
+  }, [amount]);
+
+  return (
+    <div className={styles.dpGpay} aria-disabled={disabled || undefined} style={disabled ? { opacity: 0.45, pointerEvents: "none" } : undefined}>
+      <div ref={host} />
+      {state === "loading" ? <p className={styles.dpPick}>Loading Google Pay…</p> : null}
+      {state === "unavailable" ? (
+        <p className={styles.dpPick}>Google Pay is not available in this browser. Use a Chrome profile with a saved Google Pay card, or pay by card instead.</p>
+      ) : null}
+    </div>
+  );
+}
+
 function DepositScreen({
   balance,
   amount,
@@ -862,6 +970,8 @@ function DepositScreen({
   onPreview,
   onClearPreview,
   busy = false,
+  onPaid,
+  onError,
 }) {
   const fill = ((clampDeposit(amount) - DEPOSIT_MIN) / (DEPOSIT_MAX - DEPOSIT_MIN)) * 100;
   const after = Math.round((Number(balance || 0) + Number(amount || 0)) * 100) / 100;
@@ -1052,10 +1162,14 @@ function DepositScreen({
                     </button>
                   </div>
                 ) : (
+                  selected?.id === "gpay" && !demoPanelBase ? (
+                    <GooglePayButton amount={amount} disabled={!draftOk} onPaid={onPaid} onError={onError} />
+                  ) : (
                   <button className={`${styles.primary} ${styles.dpPay}`} type="button" disabled={!draftOk || !selected || busy} onClick={onPreview}>
                     {busy ? "Opening checkout…" : `Pay ${formatPrice(amount)}`}
                     {busy ? <Loader2 size={15} /> : <ArrowRight size={15} />}
                   </button>
+                  )
                 )}
               </div>
             </div>
@@ -5903,6 +6017,11 @@ export default function AdminPanel({ mode = "admin", demo = false }) {
               }}
               onPreview={startDeposit}
               busy={depositBusy}
+              onPaid={() => {
+                showToast("Payment received. Your balance was updated.", "success");
+                load();
+              }}
+              onError={(message) => showToast(message, "error")}
               onClearPreview={() => setDepositPreview(false)}
             />
           ) : view === "transactions" && reseller ? (
