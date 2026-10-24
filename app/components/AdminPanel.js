@@ -848,33 +848,39 @@ const DEPOSIT_STEPS = [
 
 const STRIPE_PUBLISHABLE_KEY = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY || "";
 
-function loadStripeJs() {
+function loadGooglePayJs() {
   if (typeof window === "undefined") return Promise.reject(new Error("No window."));
-  if (window.Stripe) return Promise.resolve(window.Stripe);
+  if (window.google?.payments?.api) return Promise.resolve(window.google.payments.api);
   return new Promise((resolve, reject) => {
-    let script = document.querySelector("script[data-stripe-js]");
+    let script = document.querySelector("script[data-google-pay-js]");
     if (!script) {
       script = document.createElement("script");
-      script.src = "https://js.stripe.com/v3/";
+      script.src = "https://pay.google.com/gp/p/js/pay.js";
       script.async = true;
-      script.dataset.stripeJs = "1";
+      script.dataset.googlePayJs = "1";
       document.head.appendChild(script);
     }
-    script.addEventListener("load", () => resolve(window.Stripe));
-    script.addEventListener("error", () => reject(new Error("Could not load Stripe.")));
+    script.addEventListener("load", () => resolve(window.google.payments.api));
+    script.addEventListener("error", () => reject(new Error("Could not load Google Pay.")));
   });
 }
 
-// Google Pay button from Stripe's Express Checkout Element. The payment is confirmed in the
-// browser, then the server checks it with Stripe before crediting the balance.
+const GOOGLE_PAY_CARD = {
+  type: "CARD",
+  parameters: {
+    allowedAuthMethods: ["PAN_ONLY", "CRYPTOGRAM_3DS"],
+    allowedCardNetworks: ["MASTERCARD", "VISA"],
+  },
+};
+
+// Google Pay button. Clicking it opens Google's own payment sheet; Google hands back a Stripe
+// card token, and the server charges it and credits the balance.
 function GooglePayButton({ amount, disabled, onPaid, onError }) {
   const host = useRef(null);
-  const elementsRef = useRef(null);
-  const amountRef = useRef(amount);
-  const handlers = useRef({ onPaid, onError });
+  const clientRef = useRef(null);
+  const latest = useRef({ amount, onPaid, onError });
   const [state, setState] = useState("loading");
-  amountRef.current = amount;
-  handlers.current = { onPaid, onError };
+  latest.current = { amount, onPaid, onError };
 
   useEffect(() => {
     if (!STRIPE_PUBLISHABLE_KEY) {
@@ -882,73 +888,82 @@ function GooglePayButton({ amount, disabled, onPaid, onError }) {
       return undefined;
     }
     let cancelled = false;
-    let express = null;
-    loadStripeJs()
-      .then((Stripe) => {
-        if (cancelled || !host.current) return;
-        const stripe = Stripe(STRIPE_PUBLISHABLE_KEY);
-        const elements = stripe.elements({
-          mode: "payment",
-          amount: Math.round(amountRef.current * 100),
-          currency: "eur",
-          paymentMethodTypes: ["card"],
-          appearance: { theme: "night" },
+    loadGooglePayJs()
+      .then((api) => {
+        if (cancelled || !host.current) return null;
+        const client = new api.PaymentsClient({
+          environment: STRIPE_PUBLISHABLE_KEY.startsWith("pk_live") ? "PRODUCTION" : "TEST",
         });
-        elementsRef.current = elements;
-        express = elements.create("expressCheckout", {
-          paymentMethods: { googlePay: "auto", applePay: "never", link: "never", amazonPay: "never", paypal: "never", klarna: "never" },
-          buttonType: { googlePay: "pay" },
-          buttonTheme: { googlePay: "white" },
-          buttonHeight: 46,
-        });
-        express.on("ready", (event) => {
-          if (!cancelled) setState(event.availablePaymentMethods?.googlePay ? "ready" : "unavailable");
-        });
-        express.on("confirm", async () => {
-          try {
-            const submitted = await elements.submit();
-            if (submitted.error) throw new Error(submitted.error.message);
-            const created = await resellerApi("/api/reseller/deposit", {
-              method: "POST",
-              body: JSON.stringify({ amount: amountRef.current, method: "gpay" }),
-            });
-            const result = await stripe.confirmPayment({
-              elements,
-              clientSecret: created.clientSecret,
-              confirmParams: { return_url: `${window.location.origin}/panel/deposit` },
-              redirect: "if_required",
-            });
-            if (result.error) throw new Error(result.error.message);
-            const intentId = result.paymentIntent?.id;
-            if (!intentId) throw new Error("Payment could not be confirmed.");
-            await resellerApi(`/api/reseller/deposit?payment_intent=${encodeURIComponent(intentId)}`);
-            handlers.current.onPaid();
-          } catch (err) {
-            handlers.current.onError(err.message || "Google Pay failed.");
+        clientRef.current = client;
+        return client.isReadyToPay({ apiVersion: 2, apiVersionMinor: 0, allowedPaymentMethods: [GOOGLE_PAY_CARD] }).then((ready) => {
+          if (cancelled || !host.current) return;
+          if (!ready.result) {
+            setState("unavailable");
+            return;
           }
+          host.current.replaceChildren(
+            client.createButton({
+              buttonColor: "white",
+              buttonType: "pay",
+              buttonSizeMode: "fill",
+              onClick: pay,
+            })
+          );
+          setState("ready");
         });
-        express.mount(host.current);
       })
       .catch(() => {
         if (!cancelled) setState("unavailable");
       });
     return () => {
       cancelled = true;
-      if (express) express.destroy();
-      elementsRef.current = null;
     };
   }, []);
 
-  useEffect(() => {
-    if (elementsRef.current) elementsRef.current.update({ amount: Math.round(amount * 100) });
-  }, [amount]);
+  async function pay() {
+    const { amount: value, onPaid: done, onError: fail } = latest.current;
+    try {
+      const data = await clientRef.current.loadPaymentData({
+        apiVersion: 2,
+        apiVersionMinor: 0,
+        allowedPaymentMethods: [
+          {
+            ...GOOGLE_PAY_CARD,
+            tokenizationSpecification: {
+              type: "PAYMENT_GATEWAY",
+              parameters: {
+                gateway: "stripe",
+                "stripe:version": "2018-10-31",
+                "stripe:publishableKey": STRIPE_PUBLISHABLE_KEY,
+              },
+            },
+          },
+        ],
+        merchantInfo: { merchantName: "Script Engine" },
+        transactionInfo: {
+          totalPriceStatus: "FINAL",
+          totalPrice: Number(value).toFixed(2),
+          currencyCode: "EUR",
+        },
+      });
+      const token = JSON.parse(data.paymentMethodData.tokenizationData.token);
+      await resellerApi("/api/reseller/deposit", {
+        method: "POST",
+        body: JSON.stringify({ amount: value, method: "gpay", token: token.id }),
+      });
+      done();
+    } catch (err) {
+      if (err?.statusCode === "CANCELED") return;
+      fail(err.message || "Google Pay failed.");
+    }
+  }
 
   return (
-    <div className={styles.dpGpay} aria-disabled={disabled || undefined} style={disabled ? { opacity: 0.45, pointerEvents: "none" } : undefined}>
-      <div ref={host} />
+    <div className={styles.dpGpay} style={disabled ? { opacity: 0.45, pointerEvents: "none" } : undefined}>
+      <div ref={host} style={{ minHeight: 46 }} />
       {state === "loading" ? <p className={styles.dpPick}>Loading Google Pay…</p> : null}
       {state === "unavailable" ? (
-        <p className={styles.dpPick}>Google Pay is not available in this browser. Use a Chrome profile with a saved Google Pay card, or pay by card instead.</p>
+        <p className={styles.dpPick}>Google Pay is not available in this browser. Pay by card instead.</p>
       ) : null}
     </div>
   );

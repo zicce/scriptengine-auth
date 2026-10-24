@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireReseller } from "../../../../lib/require-reseller";
-import { createDepositIntent, createDepositSession, creditPaidIntent, creditPaidSession, retrieveIntent, retrieveSession } from "../../../../lib/stripe";
+import { chargeGooglePayToken, createDepositSession, creditPaidIntent, creditPaidSession, retrieveIntent, retrieveSession } from "../../../../lib/stripe";
 
 export const dynamic = "force-dynamic";
 
@@ -35,8 +35,16 @@ export async function POST(request) {
 
   try {
     if (body.method === "gpay") {
-      const intent = await createDepositIntent({ resellerId: auth.reseller.id, amount });
-      return NextResponse.json({ clientSecret: intent.client_secret });
+      const token = String(body.token || "");
+      if (!/^tok_[A-Za-z0-9_]+$/.test(token)) {
+        return NextResponse.json({ error: "Google Pay did not return a payment token." }, { status: 400 });
+      }
+      const intent = await chargeGooglePayToken({ resellerId: auth.reseller.id, amount, token });
+      if (intent.status !== "succeeded") {
+        return NextResponse.json({ error: "This card needs extra verification. Pay by card instead." }, { status: 402 });
+      }
+      const result = await creditPaidIntent(auth.supabase, intent);
+      return NextResponse.json({ paid: true, credited: result.credited === true });
     }
     const session = await createDepositSession({
       resellerId: auth.reseller.id,
