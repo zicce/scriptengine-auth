@@ -6,6 +6,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { installDemoApi } from "../../lib/demo-api";
 import { APP_STATUSES, DURATION_UNITS, formatDuration, formatPrice } from "../../lib/constants";
 import {
   DEFAULT_KEY_FORMAT,
@@ -788,8 +789,15 @@ function formatDepositDraft(amount) {
   return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(2);
 }
 
+// The public /demo page runs this same panel against sample data (lib/demo-api.js).
+let demoPanelBase = "";
+
+function panelBase(reseller) {
+  return reseller ? demoPanelBase || "/panel" : "/admin";
+}
+
 function parsePanelPath(pathname, reseller) {
-  const base = reseller ? "/panel" : "/admin";
+  const base = panelBase(reseller);
   const path = pathname || base;
   const rest = path === base ? "" : path.startsWith(`${base}/`) ? path.slice(base.length + 1) : "";
   const parts = rest.split("/").filter(Boolean);
@@ -857,7 +865,7 @@ function DepositScreen({
       <div className={styles.viewHead}>
         <div>
           <h1>Deposit</h1>
-          <p>Top up your balance to buy licenses. This screen is a preview and does not charge anything.</p>
+          <p>{demoPanelBase ? "Top up your balance to buy licenses. This is a preview only, so no money can be sent here." : "Top up your balance to buy licenses. This screen is a preview and does not charge anything."}</p>
         </div>
       </div>
 
@@ -1029,7 +1037,7 @@ function DepositScreen({
                     <ShieldCheck size={16} />
                     <div>
                       <strong>Preview ready</strong>
-                      <p>No payment was sent. Checkout is not connected yet.</p>
+                      <p>{demoPanelBase ? "This is a preview only. You cannot send money here." : "No payment was sent. Checkout is not connected yet."}</p>
                     </div>
                     <button className={styles.secondary} type="button" onClick={onClearPreview}>
                       Back
@@ -3431,8 +3439,12 @@ const LOADER_ABOUT = [
   },
 ];
 
-export default function AdminPanel({ mode = "admin" }) {
+export default function AdminPanel({ mode = "admin", demo = false }) {
   const reseller = mode === "reseller";
+  if (demo) {
+    demoPanelBase = "/demo";
+    installDemoApi();
+  }
   const pathname = usePathname() || "";
   const [section, setSection] = useState(() => parsePanelPath(pathname, reseller));
   const view = section.view;
@@ -3446,7 +3458,7 @@ export default function AdminPanel({ mode = "admin" }) {
   }
 
   function setView(next) {
-    const base = reseller ? "/panel" : "/admin";
+    const base = panelBase(reseller);
     goTo(`${base}/${next}`);
   }
   const [ready, setReady] = useState(false);
@@ -4155,6 +4167,10 @@ export default function AdminPanel({ mode = "admin" }) {
   }
 
   function signOut() {
+    if (demo) {
+      showToast("This is a demo. Nothing to sign out of.", "error");
+      return;
+    }
     if (reseller) {
       window.location.href = "/api/auth/discord/logout";
       return;

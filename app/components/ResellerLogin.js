@@ -6,7 +6,7 @@ import { CloudflareTurnstileWidget } from "./CloudflareTurnstileWidget";
 
 const VERIFY_MS = 1800;
 
-export default function ResellerLogin() {
+export default function ResellerLogin({ demo = false }) {
   const [status, setStatus] = useState("idle");
   const [failed, setFailed] = useState(false);
   const timer = useRef(null);
@@ -22,7 +22,7 @@ export default function ResellerLogin() {
     setFailed(false);
     setStatus("verifying");
     timer.current = window.setTimeout(() => {
-      if (!runAccessChecks()) {
+      if (!demo && !runAccessChecks()) {
         setStatus("idle");
         setFailed(true);
         return;
@@ -39,7 +39,7 @@ export default function ResellerLogin() {
       {failed ? <div className="loginAlert">Verification failed. Please try again.</div> : null}
       <a
         className={`gateButton${ready ? "" : " gateButtonDisabled"}`}
-        href={ready ? "/api/auth/discord" : undefined}
+        href={ready ? (demo ? "/demo/applications" : "/api/auth/discord") : undefined}
         aria-disabled={ready ? undefined : true}
         onClick={(event) => {
           if (!ready) event.preventDefault();
