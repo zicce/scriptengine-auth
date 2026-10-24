@@ -7,6 +7,7 @@ import { usePathname } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { installDemoApi } from "../../lib/demo-api";
+import { DEPOSIT_TIERS, DEPOSIT_TIER_DAYS } from "../../lib/pricing";
 import { APP_STATUSES, DURATION_UNITS, formatDuration, formatPrice } from "../../lib/constants";
 import {
   DEFAULT_KEY_FORMAT,
@@ -855,7 +856,10 @@ function DepositScreen({
   onPreview,
   onClearPreview,
   busy = false,
+  discount = 0,
+  tierTotal = 0,
 }) {
+  const nextTier = DEPOSIT_TIERS.find((tier) => tierTotal < tier.amount) || null;
   const fill = ((clampDeposit(amount) - DEPOSIT_MIN) / (DEPOSIT_MAX - DEPOSIT_MIN)) * 100;
   const after = Math.round((Number(balance || 0) + Number(amount || 0)) * 100) / 100;
   const selected = DEPOSIT_METHODS.find((entry) => entry.id === method) || null;
@@ -1053,6 +1057,25 @@ function DepositScreen({
               </div>
             </div>
             {selected ? null : <p className={styles.dpPick}>Pick a method to continue.</p>}
+          </section>
+
+          <section className={styles.dpCard}>
+            <div className={styles.dpCardHead}>
+              <span className={styles.dpKicker}>Discount tiers</span>
+              <span className={styles.dpTotal}>{Number(discount) > 0 ? `${Number(discount)}% active` : "None yet"}</span>
+            </div>
+            <ul className={styles.dpTiers}>
+              {DEPOSIT_TIERS.map((tier) => (
+                <li key={tier.amount} className={tierTotal >= tier.amount ? styles.dpTierOn : ""}>
+                  <span>{formatPrice(tier.amount)}</span>
+                  <b>{tier.discount}% off</b>
+                </li>
+              ))}
+            </ul>
+            <p className={styles.dpTierNote}>
+              Card top-ups in the last {DEPOSIT_TIER_DAYS} days add up: {formatPrice(tierTotal)} so far.
+              {nextTier ? ` ${formatPrice(nextTier.amount - tierTotal)} more unlocks ${nextTier.discount}%.` : " You have the top tier."} Your discount never goes down.
+            </p>
           </section>
 
           <section className={styles.dpCard}>
@@ -4591,6 +4614,10 @@ export default function AdminPanel({ mode = "admin", demo = false }) {
     updates.some((entry) => new Date(entry.createdAt).getTime() > Number(updatesSeen || 0));
   const depositTopups = transactions.filter((entry) => entry.kind === "topup" && Number.isFinite(Number(entry.amount)));
   const depositedTotal = depositTopups.reduce((sum, entry) => sum + Number(entry.amount), 0);
+  const tierSince = Date.now() - DEPOSIT_TIER_DAYS * 86400000;
+  const tierTotal = depositTopups
+    .filter((entry) => entry.viaStripe && new Date(entry.createdAt).getTime() > tierSince)
+    .reduce((sum, entry) => sum + Number(entry.amount), 0);
   const depositDraftValue = Number(depositDraft);
   const depositDraftOk = Number.isFinite(depositDraftValue) && depositDraftValue >= DEPOSIT_MIN && depositDraftValue <= DEPOSIT_MAX;
 
@@ -5896,6 +5923,8 @@ export default function AdminPanel({ mode = "admin", demo = false }) {
               }}
               onPreview={startDeposit}
               busy={depositBusy}
+              discount={account?.discountPercent}
+              tierTotal={tierTotal}
               onClearPreview={() => setDepositPreview(false)}
             />
           ) : view === "transactions" && reseller ? (
