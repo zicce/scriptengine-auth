@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireReseller } from "../../../../lib/require-reseller";
+import { createInvoice, missingTable } from "../../../../lib/nowpayments";
 import { createDepositSession, creditPaidSession, retrieveSession } from "../../../../lib/stripe";
 
 export const dynamic = "force-dynamic";
@@ -25,7 +26,7 @@ export async function POST(request) {
   if (denied) return denied;
 
   const body = await request.json().catch(() => ({}));
-  if (body.method !== "card") {
+  if (body.method !== "card" && body.method !== "crypto") {
     return NextResponse.json({ error: "That payment method is not available yet." }, { status: 400 });
   }
   const amount = Math.round(Number(body.amount) * 100) / 100;
@@ -34,6 +35,18 @@ export async function POST(request) {
   }
 
   try {
+    if (body.method === "crypto") {
+      const origin = new URL(request.url).origin;
+      const { data: deposit, error } = await auth.supabase
+        .from("reseller_deposits")
+        .insert({ reseller_id: auth.reseller.id, provider: "nowpayments", amount })
+        .select("id")
+        .single();
+      if (error) throw missingTable(error);
+      const invoice = await createInvoice({ depositId: deposit.id, amount, origin });
+      await auth.supabase.from("reseller_deposits").update({ provider_ref: String(invoice.id) }).eq("id", deposit.id);
+      return NextResponse.json({ url: invoice.invoice_url });
+    }
     const session = await createDepositSession({
       resellerId: auth.reseller.id,
       amount,

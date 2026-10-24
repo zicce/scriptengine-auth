@@ -7,7 +7,7 @@ import { usePathname } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { installDemoApi } from "../../lib/demo-api";
-import { DEPOSIT_TIERS, DEPOSIT_TIER_DAYS } from "../../lib/pricing";
+import { CRYPTO_BONUS_PERCENT, DEPOSIT_TIERS, DEPOSIT_TIER_DAYS } from "../../lib/pricing";
 import { APP_STATUSES, DURATION_UNITS, formatDuration, formatPrice } from "../../lib/constants";
 import {
   DEFAULT_KEY_FORMAT,
@@ -828,7 +828,7 @@ const DEPOSIT_METHODS = [
   {
     id: "crypto",
     name: "Cryptocurrencies",
-    detail: "BTC, ETH, LTC, USDT, and much more...",
+    detail: `BTC, ETH, LTC, USDT and more · +${CRYPTO_BONUS_PERCENT}% bonus`,
     processor: "NOWPayments",
     marks: [{ src: "/images/payment-methods/bitcoin.svg?v=3" }],
   },
@@ -861,7 +861,8 @@ function DepositScreen({
 }) {
   const nextTier = DEPOSIT_TIERS.find((tier) => tierTotal < tier.amount) || null;
   const fill = ((clampDeposit(amount) - DEPOSIT_MIN) / (DEPOSIT_MAX - DEPOSIT_MIN)) * 100;
-  const after = Math.round((Number(balance || 0) + Number(amount || 0)) * 100) / 100;
+  const bonus = method === "crypto" ? Math.round(Number(amount || 0) * CRYPTO_BONUS_PERCENT) / 100 : 0;
+  const after = Math.round((Number(balance || 0) + Number(amount || 0) + bonus) * 100) / 100;
   const selected = DEPOSIT_METHODS.find((entry) => entry.id === method) || null;
   const step = preview ? 2 : selected ? 1 : 0;
 
@@ -1024,6 +1025,12 @@ function DepositScreen({
                     <dt>Amount</dt>
                     <dd>{formatPrice(amount)}</dd>
               </div>
+                  {bonus > 0 ? (
+                    <div>
+                      <dt>Crypto bonus ({CRYPTO_BONUS_PERCENT}%)</dt>
+                      <dd>+{formatPrice(bonus)}</dd>
+                    </div>
+                  ) : null}
                   <div>
                     <dt>Fee</dt>
                     <dd>{formatPrice(0)}</dd>
@@ -1073,7 +1080,7 @@ function DepositScreen({
               ))}
             </ul>
             <p className={styles.dpTierNote}>
-              Card top-ups in the last {DEPOSIT_TIER_DAYS} days add up: {formatPrice(tierTotal)} so far.
+              Card and crypto top-ups in the last {DEPOSIT_TIER_DAYS} days add up: {formatPrice(tierTotal)} so far.
               {nextTier ? ` ${formatPrice(nextTier.amount - tierTotal)} more unlocks ${nextTier.discount}%.` : " You have the top tier."} Your discount never goes down.
             </p>
           </section>
@@ -1089,7 +1096,7 @@ function DepositScreen({
                   <li key={entry.id}>
                     <i aria-hidden="true"><Plus size={13} /></i>
                     <span>
-                      <strong>Account top-up</strong>
+                      <strong>Account top-up{entry.bonus > 0 ? ` (incl. ${formatPrice(entry.bonus)} bonus)` : ""}</strong>
                       <em>{formatDate(entry.createdAt)}</em>
                     </span>
                     <b>+{formatPrice(entry.amount)}</b>
@@ -3851,6 +3858,18 @@ export default function AdminPanel({ mode = "admin", demo = false }) {
   useEffect(() => {
     if (!reseller || demoPanelBase) return;
     const params = new URLSearchParams(window.location.search);
+    if (params.has("np")) {
+      // Crypto is credited by NOWPayments' own notification, so this only refreshes the balance.
+      const paid = params.get("np") === "success";
+      window.history.replaceState(null, "", window.location.pathname);
+      if (!paid) {
+        showToast("Payment cancelled. You were not charged.", "error");
+        return;
+      }
+      showToast("Thanks. Your balance updates as soon as the payment confirms.", "success");
+      [4000, 15000, 40000].forEach((delay) => window.setTimeout(() => load(), delay));
+      return;
+    }
     const outcome = params.get("stripe");
     if (!outcome) return;
     const sessionId = params.get("session_id");
@@ -4617,13 +4636,13 @@ export default function AdminPanel({ mode = "admin", demo = false }) {
   const tierSince = Date.now() - DEPOSIT_TIER_DAYS * 86400000;
   const tierTotal = depositTopups
     .filter((entry) => entry.viaStripe && new Date(entry.createdAt).getTime() > tierSince)
-    .reduce((sum, entry) => sum + Number(entry.amount), 0);
+    .reduce((sum, entry) => sum + Number(entry.paid ?? entry.amount), 0);
   const depositDraftValue = Number(depositDraft);
   const depositDraftOk = Number.isFinite(depositDraftValue) && depositDraftValue >= DEPOSIT_MIN && depositDraftValue <= DEPOSIT_MAX;
 
   async function startDeposit() {
     // Crypto and the public demo have no checkout yet, so they only show the preview receipt.
-    if (demoPanelBase || depositMethod !== "card") {
+    if (demoPanelBase || (depositMethod !== "card" && depositMethod !== "crypto")) {
       setDepositPreview(true);
       return;
     }
@@ -4632,7 +4651,7 @@ export default function AdminPanel({ mode = "admin", demo = false }) {
     try {
       const result = await resellerApi("/api/reseller/deposit", {
         method: "POST",
-        body: JSON.stringify({ amount: depositAmount, method: "card" }),
+        body: JSON.stringify({ amount: depositAmount, method: depositMethod }),
       });
       if (!result.url) throw new Error("Could not open checkout.");
       window.location.href = result.url;
@@ -5967,7 +5986,7 @@ export default function AdminPanel({ mode = "admin", demo = false }) {
                             </td>
                             <td>
                               {topup ? (
-                                "Account top-up"
+                                entry.bonus > 0 ? `Account top-up (incl. ${formatPrice(entry.bonus)} crypto bonus)` : "Account top-up"
                               ) : (
                                 <div className={styles.txDetail}>
                                   <span>{detail || "License"}</span>
