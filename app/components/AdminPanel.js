@@ -854,6 +854,7 @@ function DepositScreen({
   onMethod,
   onPreview,
   onClearPreview,
+  busy = false,
 }) {
   const fill = ((clampDeposit(amount) - DEPOSIT_MIN) / (DEPOSIT_MAX - DEPOSIT_MIN)) * 100;
   const after = Math.round((Number(balance || 0) + Number(amount || 0)) * 100) / 100;
@@ -1044,9 +1045,9 @@ function DepositScreen({
                     </button>
                   </div>
                 ) : (
-                  <button className={`${styles.primary} ${styles.dpPay}`} type="button" disabled={!draftOk || !selected} onClick={onPreview}>
-                    Pay {formatPrice(amount)}
-                    <ArrowRight size={15} />
+                  <button className={`${styles.primary} ${styles.dpPay}`} type="button" disabled={!draftOk || !selected || busy} onClick={onPreview}>
+                    {busy ? "Opening checkout…" : `Pay ${formatPrice(amount)}`}
+                    {busy ? <Loader2 size={15} /> : <ArrowRight size={15} />}
                   </button>
                 )}
               </div>
@@ -3484,6 +3485,7 @@ export default function AdminPanel({ mode = "admin", demo = false }) {
   const [depositDraft, setDepositDraft] = useState("100");
   const [depositMethod, setDepositMethod] = useState("");
   const [depositPreview, setDepositPreview] = useState(false);
+  const [depositBusy, setDepositBusy] = useState(false);
   const [updatesSeen, setUpdatesSeen] = useState("0");
   const [updatesNewSince, setUpdatesNewSince] = useState(null);
   const [updateForm, setUpdateForm] = useState({ title: "", description: "", badges: [emptyUpdateBadge()], tags: [] });
@@ -3822,6 +3824,30 @@ export default function AdminPanel({ mode = "admin", demo = false }) {
     }
     load();
   }, [load, reseller]);
+
+  useEffect(() => {
+    if (!reseller || demoPanelBase) return;
+    const params = new URLSearchParams(window.location.search);
+    const outcome = params.get("stripe");
+    if (!outcome) return;
+    const sessionId = params.get("session_id");
+    window.history.replaceState(null, "", window.location.pathname);
+    if (outcome !== "success" || !sessionId) {
+      showToast("Payment cancelled. You were not charged.", "error");
+      return;
+    }
+    resellerApi(`/api/reseller/deposit?session_id=${encodeURIComponent(sessionId)}`)
+      .then((result) => {
+        if (!result.paid) {
+          showToast("Payment is still processing. Your balance updates once it clears.", "error");
+          return null;
+        }
+        showToast("Payment received. Your balance was updated.", "success");
+        return load();
+      })
+      .catch((err) => showToast(err.message, "error"));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reseller]);
 
   useEffect(() => {
     if (!formatHydrated.current) return undefined;
@@ -4567,6 +4593,27 @@ export default function AdminPanel({ mode = "admin", demo = false }) {
   const depositedTotal = depositTopups.reduce((sum, entry) => sum + Number(entry.amount), 0);
   const depositDraftValue = Number(depositDraft);
   const depositDraftOk = Number.isFinite(depositDraftValue) && depositDraftValue >= DEPOSIT_MIN && depositDraftValue <= DEPOSIT_MAX;
+
+  async function startDeposit() {
+    // Crypto and the public demo have no checkout yet, so they only show the preview receipt.
+    if (demoPanelBase || depositMethod !== "card") {
+      setDepositPreview(true);
+      return;
+    }
+    if (depositBusy || !depositDraftOk) return;
+    setDepositBusy(true);
+    try {
+      const result = await resellerApi("/api/reseller/deposit", {
+        method: "POST",
+        body: JSON.stringify({ amount: depositAmount, method: "card" }),
+      });
+      if (!result.url) throw new Error("Could not open checkout.");
+      window.location.href = result.url;
+    } catch (err) {
+      showError(err.message);
+      setDepositBusy(false);
+    }
+  }
 
   function commitDeposit(value) {
     const next = clampDeposit(value);
@@ -5847,7 +5894,8 @@ export default function AdminPanel({ mode = "admin", demo = false }) {
                 setDepositMethod(value);
                 setDepositPreview(false);
               }}
-              onPreview={() => setDepositPreview(true)}
+              onPreview={startDeposit}
+              busy={depositBusy}
               onClearPreview={() => setDepositPreview(false)}
             />
           ) : view === "transactions" && reseller ? (
