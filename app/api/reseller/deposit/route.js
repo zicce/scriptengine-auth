@@ -25,7 +25,7 @@ export async function POST(request) {
   if (denied) return denied;
 
   const body = await request.json().catch(() => ({}));
-  if (body.method !== "card") {
+  if (body.method !== "card" && body.method !== "gpay") {
     return NextResponse.json({ error: "That payment method is not available yet." }, { status: 400 });
   }
   const amount = Math.round(Number(body.amount) * 100) / 100;

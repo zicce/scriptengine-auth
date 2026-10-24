@@ -825,6 +825,13 @@ const DEPOSIT_METHODS = [
     ],
   },
   {
+    id: "gpay",
+    name: "Google Pay",
+    detail: "Pay with your saved Google cards",
+    processor: "Stripe",
+    marks: [{ src: "/images/payment-methods/googlepay.svg", card: true }],
+  },
+  {
     id: "crypto",
     name: "Cryptocurrencies",
     detail: "BTC, ETH, LTC, USDT, and much more...",
@@ -4596,7 +4603,7 @@ export default function AdminPanel({ mode = "admin", demo = false }) {
 
   async function startDeposit() {
     // Crypto and the public demo have no checkout yet, so they only show the preview receipt.
-    if (demoPanelBase || depositMethod !== "card") {
+    if (demoPanelBase || (depositMethod !== "card" && depositMethod !== "gpay")) {
       setDepositPreview(true);
       return;
     }
@@ -4605,7 +4612,7 @@ export default function AdminPanel({ mode = "admin", demo = false }) {
     try {
       const result = await resellerApi("/api/reseller/deposit", {
         method: "POST",
-        body: JSON.stringify({ amount: depositAmount, method: "card" }),
+        body: JSON.stringify({ amount: depositAmount, method: depositMethod }),
       });
       if (!result.url) throw new Error("Could not open checkout.");
       window.location.href = result.url;
