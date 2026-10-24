@@ -846,8 +846,6 @@ const DEPOSIT_STEPS = [
   { icon: Check, title: "Balance credited", text: "Added automatically once the payment is confirmed." },
 ];
 
-const STRIPE_PUBLISHABLE_KEY = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY || "";
-
 function loadGooglePayJs() {
   if (typeof window === "undefined") return Promise.reject(new Error("No window."));
   if (window.google?.payments?.api) return Promise.resolve(window.google.payments.api);
@@ -878,27 +876,35 @@ const GOOGLE_PAY_CARD = {
 function GooglePayButton({ amount, disabled, onPaid, onError }) {
   const host = useRef(null);
   const clientRef = useRef(null);
+  const keyRef = useRef("");
   const latest = useRef({ amount, onPaid, onError });
   const [state, setState] = useState("loading");
+  const [reason, setReason] = useState("");
   latest.current = { amount, onPaid, onError };
 
   useEffect(() => {
-    if (!STRIPE_PUBLISHABLE_KEY) {
-      setState("unavailable");
-      return undefined;
-    }
     let cancelled = false;
-    loadGooglePayJs()
-      .then((api) => {
+    const fail = (why) => {
+      if (cancelled) return;
+      setReason(why);
+      setState("unavailable");
+    };
+    Promise.all([resellerApi("/api/reseller/deposit?config=1"), loadGooglePayJs()])
+      .then(([config, api]) => {
         if (cancelled || !host.current) return null;
+        keyRef.current = config.publishableKey || "";
+        if (!keyRef.current) {
+          fail("Stripe publishable key is missing on the server.");
+          return null;
+        }
         const client = new api.PaymentsClient({
-          environment: STRIPE_PUBLISHABLE_KEY.startsWith("pk_live") ? "PRODUCTION" : "TEST",
+          environment: keyRef.current.startsWith("pk_live") ? "PRODUCTION" : "TEST",
         });
         clientRef.current = client;
         return client.isReadyToPay({ apiVersion: 2, apiVersionMinor: 0, allowedPaymentMethods: [GOOGLE_PAY_CARD] }).then((ready) => {
           if (cancelled || !host.current) return;
           if (!ready.result) {
-            setState("unavailable");
+            fail("Google Pay reported this browser cannot use it.");
             return;
           }
           host.current.replaceChildren(
@@ -912,9 +918,7 @@ function GooglePayButton({ amount, disabled, onPaid, onError }) {
           setState("ready");
         });
       })
-      .catch(() => {
-        if (!cancelled) setState("unavailable");
-      });
+      .catch((err) => fail(err?.message || "Google Pay could not load."));
     return () => {
       cancelled = true;
     };
@@ -934,7 +938,7 @@ function GooglePayButton({ amount, disabled, onPaid, onError }) {
               parameters: {
                 gateway: "stripe",
                 "stripe:version": "2018-10-31",
-                "stripe:publishableKey": STRIPE_PUBLISHABLE_KEY,
+                "stripe:publishableKey": keyRef.current,
               },
             },
           },
@@ -963,7 +967,7 @@ function GooglePayButton({ amount, disabled, onPaid, onError }) {
       <div ref={host} style={{ minHeight: 46 }} />
       {state === "loading" ? <p className={styles.dpPick}>Loading Google Pay…</p> : null}
       {state === "unavailable" ? (
-        <p className={styles.dpPick}>Google Pay is not available in this browser. Pay by card instead.</p>
+        <p className={styles.dpPick}>{reason || "Google Pay is not available."} Pay by card instead.</p>
       ) : null}
     </div>
   );

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { ensureServerEnv, serverEnv } from "../../../../lib/server-env";
 import { requireReseller } from "../../../../lib/require-reseller";
 import { chargeGooglePayToken, createDepositSession, creditPaidIntent, creditPaidSession, retrieveIntent, retrieveSession } from "../../../../lib/stripe";
 
@@ -65,6 +66,11 @@ export async function GET(request) {
   if (denied) return denied;
 
   const params = new URL(request.url).searchParams;
+  if (params.has("config")) {
+    // The publishable key is read at request time, so it needs no rebuild when it changes.
+    await ensureServerEnv();
+    return NextResponse.json({ publishableKey: serverEnv("STRIPE_PUBLISHABLE_KEY") || serverEnv("NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY") });
+  }
   const intentId = params.get("payment_intent") || "";
   if (/^pi_[A-Za-z0-9_]+$/.test(intentId)) {
     try {
