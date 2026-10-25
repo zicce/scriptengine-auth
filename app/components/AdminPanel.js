@@ -6,6 +6,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { installDemoApi } from "../../lib/demo-api";
+import { CRYPTO_BONUS_PERCENT, DEPOSIT_TIERS, DEPOSIT_TIER_DAYS } from "../../lib/pricing";
 import { APP_STATUSES, DURATION_UNITS, formatDuration, formatPrice } from "../../lib/constants";
 import {
   DEFAULT_KEY_FORMAT,
@@ -904,8 +906,15 @@ function formatDepositDraft(amount) {
   return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(2);
 }
 
+// The public /demo page runs this same panel against sample data (lib/demo-api.js).
+let demoPanelBase = "";
+
+function panelBase(reseller) {
+  return reseller ? demoPanelBase || "/panel" : "/admin";
+}
+
 function parsePanelPath(pathname, reseller) {
-  const base = reseller ? "/panel" : "/admin";
+  const base = panelBase(reseller);
   const path = pathname || base;
   const rest = path === base ? "" : path.startsWith(`${base}/`) ? path.slice(base.length + 1) : "";
   const parts = rest.split("/").filter(Boolean);
@@ -935,7 +944,7 @@ const DEPOSIT_METHODS = [
   {
     id: "crypto",
     name: "Cryptocurrencies",
-    detail: "BTC, ETH, LTC, USDT, and much more...",
+    detail: `BTC, ETH, LTC, USDT and more · +${CRYPTO_BONUS_PERCENT}% bonus`,
     processor: "NOWPayments",
     marks: [{ src: "/images/payment-methods/bitcoin.svg?v=3" }],
   },
@@ -962,9 +971,14 @@ function DepositScreen({
   onMethod,
   onPreview,
   onClearPreview,
+  busy = false,
+  discount = 0,
+  tierTotal = 0,
 }) {
+  const nextTier = DEPOSIT_TIERS.find((tier) => tierTotal < tier.amount) || null;
   const fill = ((clampDeposit(amount) - DEPOSIT_MIN) / (DEPOSIT_MAX - DEPOSIT_MIN)) * 100;
-  const after = Math.round((Number(balance || 0) + Number(amount || 0)) * 100) / 100;
+  const bonus = method === "crypto" ? Math.round(Number(amount || 0) * CRYPTO_BONUS_PERCENT) / 100 : 0;
+  const after = Math.round((Number(balance || 0) + Number(amount || 0) + bonus) * 100) / 100;
   const selected = DEPOSIT_METHODS.find((entry) => entry.id === method) || null;
   const step = preview ? 2 : selected ? 1 : 0;
 
@@ -973,7 +987,7 @@ function DepositScreen({
       <div className={styles.viewHead}>
         <div>
           <h1>Deposit</h1>
-          <p>Top up your balance to buy licenses. This screen is a preview and does not charge anything.</p>
+          <p>{demoPanelBase ? "Top up your balance to buy licenses. This is a preview only, so no money can be sent here." : "Top up your balance to buy licenses. This screen is a preview and does not charge anything."}</p>
         </div>
       </div>
 
@@ -1127,6 +1141,12 @@ function DepositScreen({
                     <dt>Amount</dt>
                     <dd>{formatPrice(amount)}</dd>
               </div>
+                  {bonus > 0 ? (
+                    <div>
+                      <dt>Crypto bonus ({CRYPTO_BONUS_PERCENT}%)</dt>
+                      <dd>+{formatPrice(bonus)}</dd>
+                    </div>
+                  ) : null}
                   <div>
                     <dt>Fee</dt>
                     <dd>{formatPrice(0)}</dd>
@@ -1145,21 +1165,40 @@ function DepositScreen({
                     <ShieldCheck size={16} />
                     <div>
                       <strong>Preview ready</strong>
-                      <p>No payment was sent. Checkout is not connected yet.</p>
+                      <p>{demoPanelBase ? "This is a preview only. You cannot send money here." : "No payment was sent. Checkout is not connected yet."}</p>
                     </div>
                     <button className={styles.secondary} type="button" onClick={onClearPreview}>
                       Back
                     </button>
                   </div>
                 ) : (
-                  <button className={`${styles.primary} ${styles.dpPay}`} type="button" disabled={!draftOk || !selected} onClick={onPreview}>
-                    Pay {formatPrice(amount)}
-                    <ArrowRight size={15} />
+                  <button className={`${styles.primary} ${styles.dpPay}`} type="button" disabled={!draftOk || !selected || busy} onClick={onPreview}>
+                    {busy ? "Opening checkout…" : `Pay ${formatPrice(amount)}`}
+                    {busy ? <Loader2 size={15} /> : <ArrowRight size={15} />}
                   </button>
                 )}
               </div>
             </div>
             {selected ? null : <p className={styles.dpPick}>Pick a method to continue.</p>}
+          </section>
+
+          <section className={styles.dpCard}>
+            <div className={styles.dpCardHead}>
+              <span className={styles.dpKicker}>Discount tiers</span>
+              <span className={styles.dpTotal}>{Number(discount) > 0 ? `${Number(discount)}% active` : "None yet"}</span>
+            </div>
+            <ul className={styles.dpTiers}>
+              {DEPOSIT_TIERS.map((tier) => (
+                <li key={tier.amount} className={tierTotal >= tier.amount ? styles.dpTierOn : ""}>
+                  <span>{formatPrice(tier.amount)}</span>
+                  <b>{tier.discount}% off</b>
+                </li>
+              ))}
+            </ul>
+            <p className={styles.dpTierNote}>
+              Card and crypto top-ups in the last {DEPOSIT_TIER_DAYS} days add up: {formatPrice(tierTotal)} so far.
+              {nextTier ? ` ${formatPrice(nextTier.amount - tierTotal)} more unlocks ${nextTier.discount}%.` : " You have the top tier."} Your discount never goes down.
+            </p>
           </section>
 
           <section className={styles.dpCard}>
@@ -1173,7 +1212,7 @@ function DepositScreen({
                   <li key={entry.id}>
                     <i aria-hidden="true"><Plus size={13} /></i>
                     <span>
-                      <strong>Account top-up</strong>
+                      <strong>Account top-up{entry.bonus > 0 ? ` (incl. ${formatPrice(entry.bonus)} bonus)` : ""}</strong>
                       <em>{formatDate(entry.createdAt)}</em>
                     </span>
                     <b>+{formatPrice(entry.amount)}</b>
@@ -3547,8 +3586,12 @@ const LOADER_ABOUT = [
   },
 ];
 
-export default function AdminPanel({ mode = "admin" }) {
+export default function AdminPanel({ mode = "admin", demo = false }) {
   const reseller = mode === "reseller";
+  if (demo) {
+    demoPanelBase = "/demo";
+    installDemoApi();
+  }
   const pathname = usePathname() || "";
   const [section, setSection] = useState(() => parsePanelPath(pathname, reseller));
   const view = section.view;
@@ -3562,7 +3605,7 @@ export default function AdminPanel({ mode = "admin" }) {
   }
 
   function setView(next) {
-    const base = reseller ? "/panel" : "/admin";
+    const base = panelBase(reseller);
     goTo(`${base}/${next}`);
   }
   const [ready, setReady] = useState(false);
@@ -3588,6 +3631,7 @@ export default function AdminPanel({ mode = "admin" }) {
   const [depositDraft, setDepositDraft] = useState("100");
   const [depositMethod, setDepositMethod] = useState("");
   const [depositPreview, setDepositPreview] = useState(false);
+  const [depositBusy, setDepositBusy] = useState(false);
   const [updatesSeen, setUpdatesSeen] = useState("0");
   const [updatesNewSince, setUpdatesNewSince] = useState(null);
   const [updateForm, setUpdateForm] = useState({ title: "", description: "", badges: [emptyUpdateBadge()], tags: [] });
@@ -3926,6 +3970,42 @@ export default function AdminPanel({ mode = "admin" }) {
     }
     load();
   }, [load, reseller]);
+
+  useEffect(() => {
+    if (!reseller || demoPanelBase) return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.has("np")) {
+      // Crypto is credited by NOWPayments' own notification, so this only refreshes the balance.
+      const paid = params.get("np") === "success";
+      window.history.replaceState(null, "", window.location.pathname);
+      if (!paid) {
+        showToast("Payment cancelled. You were not charged.", "error");
+        return;
+      }
+      showToast("Thanks. Your balance updates as soon as the payment confirms.", "success");
+      [4000, 15000, 40000].forEach((delay) => window.setTimeout(() => load(), delay));
+      return;
+    }
+    const outcome = params.get("stripe");
+    if (!outcome) return;
+    const sessionId = params.get("session_id");
+    window.history.replaceState(null, "", window.location.pathname);
+    if (outcome !== "success" || !sessionId) {
+      showToast("Payment cancelled. You were not charged.", "error");
+      return;
+    }
+    resellerApi(`/api/reseller/deposit?session_id=${encodeURIComponent(sessionId)}`)
+      .then((result) => {
+        if (!result.paid) {
+          showToast("Payment is still processing. Your balance updates once it clears.", "error");
+          return null;
+        }
+        showToast("Payment received. Your balance was updated.", "success");
+        return load();
+      })
+      .catch((err) => showToast(err.message, "error"));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reseller]);
 
   useEffect(() => {
     if (!formatHydrated.current) return undefined;
@@ -4271,6 +4351,10 @@ export default function AdminPanel({ mode = "admin" }) {
   }
 
   function signOut() {
+    if (demo) {
+      showToast("This is a demo. Nothing to sign out of.", "error");
+      return;
+    }
     if (reseller) {
       window.location.href = "/api/auth/discord/logout";
       return;
@@ -4670,8 +4754,33 @@ export default function AdminPanel({ mode = "admin" }) {
     updates.some((entry) => new Date(entry.createdAt).getTime() > Number(updatesSeen || 0));
   const depositTopups = transactions.filter((entry) => entry.kind === "topup" && Number.isFinite(Number(entry.amount)));
   const depositedTotal = depositTopups.reduce((sum, entry) => sum + Number(entry.amount), 0);
+  const tierSince = Date.now() - DEPOSIT_TIER_DAYS * 86400000;
+  const tierTotal = depositTopups
+    .filter((entry) => entry.viaStripe && new Date(entry.createdAt).getTime() > tierSince)
+    .reduce((sum, entry) => sum + Number(entry.paid ?? entry.amount), 0);
   const depositDraftValue = Number(depositDraft);
   const depositDraftOk = Number.isFinite(depositDraftValue) && depositDraftValue >= DEPOSIT_MIN && depositDraftValue <= DEPOSIT_MAX;
+
+  async function startDeposit() {
+    // Crypto and the public demo have no checkout yet, so they only show the preview receipt.
+    if (demoPanelBase || (depositMethod !== "card" && depositMethod !== "crypto")) {
+      setDepositPreview(true);
+      return;
+    }
+    if (depositBusy || !depositDraftOk) return;
+    setDepositBusy(true);
+    try {
+      const result = await resellerApi("/api/reseller/deposit", {
+        method: "POST",
+        body: JSON.stringify({ amount: depositAmount, method: depositMethod }),
+      });
+      if (!result.url) throw new Error("Could not open checkout.");
+      window.location.href = result.url;
+    } catch (err) {
+      showError(err.message);
+      setDepositBusy(false);
+    }
+  }
 
   function commitDeposit(value) {
     const next = clampDeposit(value);
@@ -5957,7 +6066,10 @@ export default function AdminPanel({ mode = "admin" }) {
                 setDepositMethod(value);
                 setDepositPreview(false);
               }}
-              onPreview={() => setDepositPreview(true)}
+              onPreview={startDeposit}
+              busy={depositBusy}
+              discount={account?.discountPercent}
+              tierTotal={tierTotal}
               onClearPreview={() => setDepositPreview(false)}
             />
           ) : view === "transactions" && reseller ? (
@@ -6000,7 +6112,7 @@ export default function AdminPanel({ mode = "admin" }) {
                             </td>
                             <td>
                               {topup ? (
-                                "Account top-up"
+                                entry.bonus > 0 ? `Account top-up (incl. ${formatPrice(entry.bonus)} crypto bonus)` : "Account top-up"
                               ) : (
                                 <div className={styles.txDetail}>
                                   <span>{detail || "License"}</span>

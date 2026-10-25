@@ -9084,3 +9084,46 @@
   border-color: rgba(0, 0, 0, 0.08);
   background: #f3f3f4;
 }
+
+.dpTiers {
+  display: grid;
+  gap: 6px;
+  margin: 0 0 12px;
+  padding: 0;
+  list-style: none;
+}
+
+.dpTiers li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.02);
+  color: #8d8d8d;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.dpTiers li b {
+  color: #bdbdbd;
+  font-weight: 700;
+}
+
+.dpTiers li.dpTierOn {
+  border-color: rgba(142, 231, 178, 0.3);
+  background: rgba(142, 231, 178, 0.06);
+  color: #fff;
+}
+
+.dpTiers li.dpTierOn b {
+  color: #8ee7b2;
+}
+
+.dpTierNote {
+  margin: 0;
+  color: #8d8d8d;
+  font-size: 12px;
+  line-height: 1.5;
+}
