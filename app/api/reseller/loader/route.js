@@ -128,6 +128,7 @@ export async function POST(request) {
   const contentType = request.headers.get("content-type") || "";
   let body = {};
   let logoFile = null;
+  try {
   if (contentType.includes("multipart/form-data")) {
     const form = await request.formData().catch(() => null);
     body = {
@@ -209,4 +210,7 @@ export async function POST(request) {
     .eq("id", auth.reseller.id);
 
   return file.response;
+  } catch (error) {
+    return NextResponse.json({ error: error?.message || "Could not generate the loader." }, { status: 500 });
+  }
 }

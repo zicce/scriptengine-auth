@@ -1607,6 +1607,201 @@
   font-size: 12px;
 }
 
+.variantPick {
+  position: relative;
+}
+
+.variantPickOpen {
+  z-index: 6;
+}
+
+.variantPickButton,
+.variantOption {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.28);
+  color: #fff;
+  text-align: left;
+  cursor: pointer;
+}
+
+.variantPickButton {
+  min-height: 44px;
+  padding: 8px 10px;
+}
+
+.variantPickButton svg {
+  flex: 0 0 auto;
+  color: #9a9a9a;
+  transition: transform 0.16s ease;
+}
+
+.variantPickOpen .variantPickButton {
+  border-color: rgba(254, 68, 56, 0.55);
+}
+
+.variantPickOpen .variantPickButton svg {
+  transform: rotate(180deg);
+}
+
+.variantPickLabel {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.variantPickLabel strong {
+  font-size: 13px;
+  letter-spacing: -0.02em;
+}
+
+.variantPickButton .variantPickLabel strong {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.variantPickLabel small {
+  color: #8d8d8d;
+  font-size: 11px;
+}
+
+.variantPrice {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.variantPrice s {
+  color: #7c7c7c;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.variantPrice b {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.variantPrice em {
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: rgba(254, 68, 56, 0.16);
+  color: #ff8d84;
+  font-style: normal;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.variantMenu {
+  position: fixed;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  background: #191919;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
+}
+
+.variantOption {
+  min-height: 46px;
+  padding: 8px;
+  background: transparent;
+}
+
+.variantOption:hover,
+.variantOptionOn {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.variantOptionOn {
+  border-color: rgba(254, 68, 56, 0.45);
+}
+
+.buySummary {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 4px 0 0;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.buySummary > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  min-width: 0;
+}
+
+.buySummary dt {
+  color: #8d8d8d;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.buySummary dd {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 8px;
+  margin: 0;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.buySummary dd em {
+  color: #8d8d8d;
+  font-style: normal;
+  font-weight: 700;
+}
+
+.buySummary dd em.buySummaryOff {
+  color: #ff8d84;
+}
+
+.buySummary s {
+  color: #7c7c7c;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.buySummaryTotal {
+  margin-top: 2px;
+  padding-top: 10px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.12);
+}
+
+.buySummaryTotal dt {
+  color: #f3f3f3;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.buySummaryTotal dd {
+  color: #fff;
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+}
+
+.buySummaryShort dd {
+  color: #f3a3a3;
+}
+
 .row {
   display: grid;
   grid-template-columns: 1fr 1.3fr;
@@ -2300,12 +2495,56 @@
 .themeLight .group select,
 .themeLight .group textarea,
 .themeLight .variantFields input,
-.themeLight .variantFields select {
+.themeLight .variantFields select,
+.themeLight .variantPickButton,
+.themeLight .variantMenu,
+.themeLight .variantOption {
   background: #fff;
   color: #171717;
   border-color: rgba(0, 0, 0, 0.12);
 }
 
+.themeLight .variantPickLabel small,
+.themeLight .variantPrice s,
+.themeLight .buySummary s {
+  color: #8a8a8a;
+}
+
+.themeLight .buySummary {
+  border-top-color: rgba(0, 0, 0, 0.08);
+}
+
+.themeLight .buySummary dt,
+.themeLight .buySummary dd {
+  color: #171717;
+}
+
+.themeLight .buySummary dt {
+  color: #6b6b6b;
+}
+
+.themeLight .buySummaryTotal {
+  border-top-color: rgba(0, 0, 0, 0.12);
+}
+
+.themeLight .buySummaryTotal dt,
+.themeLight .buySummaryTotal dd {
+  color: #111;
+}
+
+.themeLight .buySummaryShort dd {
+  color: #b91c1c;
+}
+
+.themeLight .variantOption:hover,
+.themeLight .variantOptionOn {
+  background: #f6f6f6;
+}
+
+.themeLight .buySummary > div {
+  background: transparent;
+  border: 0;
+}
 .themeLight .secondary,
 .themeLight .ghost,
 .themeLight .iconButton {

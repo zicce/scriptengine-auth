@@ -48,7 +48,11 @@ export async function GET() {
         ...app,
         variants: (app.application_variants || [])
           .filter((variant) => variant.active !== false)
-          .map((variant) => ({ ...variant, price: discountedPrice(variant.price, discountPercent) }))
+          .map((variant) => ({
+            ...variant,
+            listPrice: Number(variant.price),
+            price: discountedPrice(variant.price, discountPercent),
+          }))
           .sort((a, b) => Number(a.sort_order || 0) - Number(b.sort_order || 0)),
       };
     });

@@ -512,6 +512,122 @@ function formatPriceRange(variants) {
   return `${formatPrice(min)} – ${formatPrice(max)}`;
 }
 
+function variantOnSale(variant) {
+  const price = Number(variant?.price);
+  const list = Number(variant?.listPrice);
+  return Number.isFinite(price) && Number.isFinite(list) && list > price + 0.001;
+}
+
+function VariantPrice({ variant, percent }) {
+  const sale = variantOnSale(variant);
+  return (
+    <span className={styles.variantPrice}>
+      {sale ? <s>{formatPrice(variant.listPrice)}</s> : null}
+      <b>{formatPrice(variant.price)}</b>
+      {sale ? <em>{`-${Number(percent) || 0}%`}</em> : null}
+    </span>
+  );
+}
+
+function VariantPicker({ variants, value, onChange, percent }) {
+  const [open, setOpen] = useState(false);
+  const [place, setPlace] = useState(null);
+  const box = useRef(null);
+  const menu = useRef(null);
+  const selected = variants.find((variant) => variant.id === value) || null;
+
+  useEffect(() => {
+    if (!open) return undefined;
+    function placeMenu() {
+      const button = box.current?.querySelector("button");
+      if (!button) return;
+      const rect = button.getBoundingClientRect();
+      const width = rect.width;
+      let left = rect.left;
+      const edge = 12;
+      if (left + width > window.innerWidth - edge) left = Math.max(edge, window.innerWidth - edge - width);
+      setPlace({ top: rect.bottom + 6, left, width });
+    }
+    function close(event) {
+      if (box.current?.contains(event.target) || menu.current?.contains(event.target)) return;
+      setOpen(false);
+    }
+    function onKey(event) {
+      if (event.key === "Escape") setOpen(false);
+    }
+    placeMenu();
+    document.addEventListener("mousedown", close);
+    document.addEventListener("keydown", onKey);
+    window.addEventListener("resize", placeMenu);
+    window.addEventListener("scroll", placeMenu, true);
+    return () => {
+      document.removeEventListener("mousedown", close);
+      document.removeEventListener("keydown", onKey);
+      window.removeEventListener("resize", placeMenu);
+      window.removeEventListener("scroll", placeMenu, true);
+    };
+  }, [open]);
+
+  return (
+    <div className={`${styles.variantPick}${open ? ` ${styles.variantPickOpen}` : ""}`} ref={box}>
+      <button
+        className={styles.variantPickButton}
+        type="button"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={() => setOpen((current) => !current)}
+      >
+        {selected ? (
+          <span className={styles.variantPickLabel}>
+            <strong>{selected.label}</strong>
+            <small>{formatDuration(selected.duration_value, selected.duration_unit)}</small>
+          </span>
+        ) : (
+          <span className={styles.variantPickLabel}>
+            <strong>Choose a variant</strong>
+          </span>
+        )}
+        {selected ? <VariantPrice variant={selected} percent={percent} /> : null}
+        <ChevronDown size={14} />
+      </button>
+      {open && place
+        ? createPortal(
+            <div
+              className={styles.variantMenu}
+              role="listbox"
+              ref={menu}
+              style={{ top: place.top, left: place.left, width: place.width }}
+            >
+              {variants.map((variant) => {
+                const active = variant.id === selected?.id;
+                return (
+                  <button
+                    key={variant.id}
+                    className={`${styles.variantOption}${active ? ` ${styles.variantOptionOn}` : ""}`}
+                    type="button"
+                    role="option"
+                    aria-selected={active}
+                    onClick={() => {
+                      onChange(variant.id);
+                      setOpen(false);
+                    }}
+                  >
+                    <span className={styles.variantPickLabel}>
+                      <strong>{variant.label}</strong>
+                      <small>{formatDuration(variant.duration_value, variant.duration_unit)}</small>
+                    </span>
+                    <VariantPrice variant={variant} percent={percent} />
+                  </button>
+                );
+              })}
+            </div>,
+            document.body
+          )
+        : null}
+    </div>
+  );
+}
+
 function statusClass(status) {
   const key = String(status || "").replace(/\s+/g, "");
   return styles[`status${key}`] || "";
@@ -4468,6 +4584,11 @@ export default function AdminPanel({ mode = "admin" }) {
   const selectedVariants = selectedApp?.variants || [];
   const selectedVariant = selectedVariants.find((variant) => variant.id === licenseForm.variantId);
   const orderCost = Math.round(Number(selectedVariant?.price || 0) * Number(licenseForm.quantity || 0) * 100) / 100;
+  const listUnit = Number(selectedVariant?.listPrice);
+  const listCost = Number.isFinite(listUnit) ? Math.round(listUnit * Number(licenseForm.quantity || 0) * 100) / 100 : null;
+  const buyDiscount = Number(account?.discountPercent) || 0;
+  const buySaved = listCost != null && listCost > orderCost + 0.001 ? Math.round((listCost - orderCost) * 100) / 100 : 0;
+  const balanceShort = Number(account?.balance || 0) + 0.001 < orderCost;
 
   const profileName = reseller ? account?.username || account?.discordId || "Reseller" : email || "Admin";
   const accountInitial = (profileName || "A").trim().charAt(0).toUpperCase();
@@ -5220,6 +5341,11 @@ export default function AdminPanel({ mode = "admin" }) {
                     "Administrator"
                   )}
                 </span>
+                {reseller ? (
+                  <span className={styles.sidebarUserBalance}>
+                    Discount: <span className={styles.sidebarUserBalanceValue}>{Number(account?.discountPercent) || 0}%</span>
+                  </span>
+                ) : null}
               </div>
               <button className={styles.sidebarUserLogout} type="button" aria-label="Sign out" onClick={signOut}>
                 <LogOut size={15} />
@@ -6140,6 +6266,12 @@ export default function AdminPanel({ mode = "admin" }) {
                       <strong>{formatPrice(account?.balance)}</strong>
                     </div>
                   ) : null}
+                  {reseller ? (
+                    <div>
+                      <span>Discount</span>
+                      <strong>{Number(account?.discountPercent) || 0}%</strong>
+                    </div>
+                  ) : null}
                   <div>
                     <span>User ID</span>
                     <strong className={styles.accountMono}>{account?.id || "—"}</strong>
@@ -6744,39 +6876,48 @@ export default function AdminPanel({ mode = "admin" }) {
                   ))}
               </select>
             </div>
-            <div className={styles.row}>
-              <div className={styles.group}>
-                <label htmlFor="license-qty">Quantity</label>
-                <input
-                  id="license-qty"
-                  type="number"
-                  min="1"
-                  max="200"
-                  value={licenseForm.quantity}
-                  onChange={(event) => setLicenseForm((current) => ({ ...current, quantity: Number(event.target.value || 1) }))}
-                />
-              </div>
-              <div className={styles.group}>
-                <label htmlFor="license-variant">Variant</label>
-                <select
-                  id="license-variant"
-                  value={licenseForm.variantId}
-                  onChange={(event) => setLicenseForm((current) => ({ ...current, variantId: event.target.value }))}
-                >
-                  {selectedVariants.map((variant) => (
-                    <option key={variant.id} value={variant.id}>
-                      {variant.label} · {formatDuration(variant.duration_value, variant.duration_unit)} · {formatPrice(variant.price)}
-                    </option>
-                  ))}
-                </select>
-              </div>
+            <div className={styles.group}>
+              <label htmlFor="license-qty">Quantity</label>
+              <input
+                id="license-qty"
+                type="number"
+                min="1"
+                max="200"
+                value={licenseForm.quantity}
+                onChange={(event) => setLicenseForm((current) => ({ ...current, quantity: Number(event.target.value || 1) }))}
+              />
+            </div>
+            <div className={styles.group}>
+              <label id="license-variant-label">Variant</label>
+              <VariantPicker
+                variants={selectedVariants}
+                value={licenseForm.variantId}
+                percent={buyDiscount}
+                onChange={(variantId) => setLicenseForm((current) => ({ ...current, variantId }))}
+              />
             </div>
             {!selectedVariants.length ? <div className={styles.messageError}>Add a variant to this application first.</div> : null}
             {reseller ? (
-              <p className={styles.muted}>
-                Total {formatPrice(orderCost)} · Balance {formatPrice(account?.balance)}
-                {Number(account?.discountPercent) > 0 ? ` · ${Number(account.discountPercent)}% discount applied` : ""}
-              </p>
+              <dl className={styles.buySummary}>
+                <div className={balanceShort ? styles.buySummaryShort : ""}>
+                  <dt>Balance</dt>
+                  <dd>{formatPrice(account?.balance)}</dd>
+                </div>
+                <div>
+                  <dt>Discount</dt>
+                  <dd>
+                    {buySaved > 0 ? <span>−{formatPrice(buySaved)}</span> : null}
+                    <em className={buyDiscount > 0 ? styles.buySummaryOff : ""}>{buyDiscount > 0 ? `−${buyDiscount}%` : "0%"}</em>
+                  </dd>
+                </div>
+                <div className={styles.buySummaryTotal}>
+                  <dt>Total</dt>
+                  <dd>
+                    {buySaved > 0 ? <s>{formatPrice(listCost)}</s> : null}
+                    {formatPrice(orderCost)}
+                  </dd>
+                </div>
+              </dl>
             ) : null}
             <div className={`${styles.message} ${formTone === "error" ? styles.messageError : styles.messageOk}`}>{formMessage}</div>
             {generatedKeys.length ? (
